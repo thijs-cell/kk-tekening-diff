@@ -5,7 +5,7 @@ import logging
 from typing import Any
 
 from fastapi import FastAPI, File, Query, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pdf2image import convert_from_bytes, pdfinfo_from_bytes
 
 from .compare import compare_page
@@ -26,6 +26,9 @@ app = FastAPI(
 
 # PDF magic bytes: %PDF
 PDF_MAGIC = b"%PDF"
+
+# Laatste vergelijkingsresultaat opslaan voor /results endpoint
+_last_result: dict[str, Any] | None = None
 
 
 def _validate_pdf(content: bytes, filename: str) -> str | None:
@@ -181,11 +184,125 @@ async def compare_pdfs(
 
     logger.info("Vergelijking voltooid: %d pagina's verwerkt", max_pages)
 
-    return JSONResponse(
-        content={
-            "status": "success",
-            "old_pages": old_count,
-            "new_pages": new_count,
-            "comparisons": comparisons,
-        }
-    )
+    # Resultaat opslaan voor /results endpoint
+    global _last_result
+    _last_result = {
+        "status": "success",
+        "old_pages": old_count,
+        "new_pages": new_count,
+        "old_filename": old_filename,
+        "new_filename": new_filename,
+        "comparisons": comparisons,
+    }
+
+    return JSONResponse(content=_last_result)
+
+
+@app.get("/results", response_class=HTMLResponse)
+async def results_page() -> HTMLResponse:
+    """Toon de laatste vergelijking als HTML pagina met overlay afbeeldingen."""
+    if _last_result is None:
+        return HTMLResponse(
+            content="<html><body><h1>Geen resultaten</h1>"
+            "<p>Er is nog geen vergelijking uitgevoerd. "
+            "Gebruik POST /compare om twee PDF's te vergelijken.</p></body></html>",
+            status_code=200,
+        )
+
+    old_name = _last_result.get("old_filename", "onbekend")
+    new_name = _last_result.get("new_filename", "onbekend")
+    old_pages = _last_result.get("old_pages", 0)
+    new_pages = _last_result.get("new_pages", 0)
+    comparisons = _last_result.get("comparisons", [])
+
+    # HTML opbouwen
+    cards_html = ""
+    for comp in comparisons:
+        page = comp["page"]
+        status = comp["status"]
+        pct = comp["change_percentage"]
+        overlay_b64 = comp.get("overlay_image")
+
+        # Kleur op basis van status
+        if status == "no_changes":
+            badge_color = "#27ae60"
+            badge_text = "Geen wijzigingen"
+        elif status == "new_page":
+            badge_color = "#2980b9"
+            badge_text = "Nieuwe pagina"
+        elif status == "removed_page":
+            badge_color = "#8e44ad"
+            badge_text = "Verwijderde pagina"
+        elif status == "alignment_failed":
+            badge_color = "#e67e22"
+            badge_text = "Uitlijning mislukt"
+        elif status == "error":
+            badge_color = "#c0392b"
+            badge_text = "Fout"
+        else:
+            badge_color = "#e74c3c" if pct > 1 else "#f39c12"
+            badge_text = f"{pct:.2f}% gewijzigd"
+
+        img_html = ""
+        if overlay_b64:
+            img_html = (
+                f'<img src="data:image/png;base64,{overlay_b64}" '
+                f'style="width:100%;border:1px solid #ddd;border-radius:4px;" '
+                f'alt="Pagina {page} overlay"/>'
+            )
+        elif status == "no_changes":
+            img_html = (
+                '<div style="padding:40px;text-align:center;color:#888;'
+                'background:#f9f9f9;border-radius:4px;">'
+                "Geen overlay — pagina is ongewijzigd</div>"
+            )
+        elif status == "removed_page":
+            img_html = (
+                '<div style="padding:40px;text-align:center;color:#8e44ad;'
+                'background:#f5eef8;border-radius:4px;">'
+                "Pagina bestaat niet meer in de nieuwe versie</div>"
+            )
+        else:
+            img_html = (
+                '<div style="padding:40px;text-align:center;color:#888;'
+                'background:#f9f9f9;border-radius:4px;">'
+                "Geen overlay beschikbaar</div>"
+            )
+
+        cards_html += f"""
+        <div style="margin-bottom:32px;">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+                <h2 style="margin:0;font-size:20px;">Pagina {page}</h2>
+                <span style="background:{badge_color};color:#fff;padding:4px 12px;
+                    border-radius:12px;font-size:14px;font-weight:500;">{badge_text}</span>
+            </div>
+            {img_html}
+        </div>"""
+
+    html = f"""<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>K&amp;K Tekening Diff — Resultaten</title>
+    <style>
+        body {{ font-family: -apple-system, system-ui, sans-serif; margin: 0;
+               padding: 24px; background: #f4f4f4; color: #333; }}
+        .container {{ max-width: 1200px; margin: 0 auto; }}
+        h1 {{ font-size: 24px; margin-bottom: 4px; }}
+        .meta {{ color: #666; font-size: 14px; margin-bottom: 24px; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Vergelijkingsresultaat</h1>
+        <p class="meta">
+            Oud: <strong>{old_name}</strong> ({old_pages} pagina's) &rarr;
+            Nieuw: <strong>{new_name}</strong> ({new_pages} pagina's)
+        </p>
+        {cards_html}
+    </div>
+</body>
+</html>"""
+
+    return HTMLResponse(content=html)
