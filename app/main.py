@@ -1,14 +1,12 @@
 """FastAPI applicatie voor het vergelijken van PDF bouwtekeningen."""
 
+import gc
 import logging
-import tempfile
-from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, File, Query, UploadFile
 from fastapi.responses import JSONResponse
-from pdf2image import convert_from_path
-from PIL import Image
+from pdf2image import convert_from_bytes, pdfinfo_from_bytes
 
 from .compare import compare_page
 from .config import DPI, MAX_FILE_SIZE_MB, SENSITIVITY
@@ -50,39 +48,10 @@ def _validate_pdf(content: bytes, filename: str) -> str | None:
     return None
 
 
-def _pdf_to_images(pdf_path: Path, dpi: int) -> list[Image.Image]:
-    """
-    Converteer alle pagina's van een PDF naar PIL Images.
-
-    Verwerkt pagina voor pagina om geheugen te besparen.
-    """
-    images: list[Image.Image] = []
-
-    # Eerst het totaal aantal pagina's bepalen via de eerste pagina
-    first = convert_from_path(str(pdf_path), dpi=dpi, first_page=1, last_page=1)
-    if not first:
-        return images
-
-    # Totaal aantal pagina's ophalen door te tellen
-    # pdf2image kan info geven via pdfinfo, maar we itereren pagina voor pagina
-    page_num = 1
-    while True:
-        try:
-            page_images = convert_from_path(
-                str(pdf_path),
-                dpi=dpi,
-                first_page=page_num,
-                last_page=page_num,
-            )
-            if not page_images:
-                break
-            images.append(page_images[0])
-            page_num += 1
-        except Exception:
-            # Geen pagina meer beschikbaar
-            break
-
-    return images
+def _get_page_count(pdf_bytes: bytes) -> int:
+    """Tel het aantal pagina's in een PDF zonder ze te renderen."""
+    info = pdfinfo_from_bytes(pdf_bytes)
+    return info.get("Pages", 0)
 
 
 @app.get("/")
@@ -106,115 +75,109 @@ async def compare_pdfs(
     """
     Vergelijk twee PDF bouwtekeningen en detecteer wijzigingen per pagina.
 
-    Ontvangt twee PDF bestanden via multipart/form-data en retourneert
-    per pagina de gedetecteerde wijzigingen als diff en overlay afbeeldingen.
+    Verwerkt per pagina: converteer, vergelijk, sla op, ruim geheugen op.
     """
     # Bestanden inlezen
-    old_content = await old_pdf.read()
-    new_content = await new_pdf.read()
+    old_bytes = await old_pdf.read()
+    new_bytes = await new_pdf.read()
 
     # Validatie
     old_filename = old_pdf.filename or "old_pdf"
     new_filename = new_pdf.filename or "new_pdf"
 
-    error = _validate_pdf(old_content, old_filename)
+    error = _validate_pdf(old_bytes, old_filename)
     if error:
         return JSONResponse(status_code=400, content={"status": "error", "detail": error})
 
-    error = _validate_pdf(new_content, new_filename)
+    error = _validate_pdf(new_bytes, new_filename)
     if error:
         return JSONResponse(status_code=400, content={"status": "error", "detail": error})
 
     logger.info(
         "Vergelijking gestart: '%s' (%d KB) vs '%s' (%d KB), DPI=%d, sensitivity=%d",
         old_filename,
-        len(old_content) // 1024,
+        len(old_bytes) // 1024,
         new_filename,
-        len(new_content) // 1024,
+        len(new_bytes) // 1024,
         dpi,
         sensitivity,
     )
 
-    # PDF's opslaan als tijdelijke bestanden en converteren naar afbeeldingen
-    old_images: list[Image.Image] = []
-    new_images: list[Image.Image] = []
-
+    # Aantal pagina's tellen ZONDER te renderen
     try:
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_old:
-            tmp_old.write(old_content)
-            tmp_old_path = Path(tmp_old.name)
-
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_new:
-            tmp_new.write(new_content)
-            tmp_new_path = Path(tmp_new.name)
-
-        # Geheugen vrijgeven na wegschrijven
-        del old_content, new_content
-
-        logger.info("PDF's omzetten naar afbeeldingen...")
-        old_images = _pdf_to_images(tmp_old_path, dpi)
-        new_images = _pdf_to_images(tmp_new_path, dpi)
-
-        logger.info(
-            "Pagina's geladen: oud=%d, nieuw=%d", len(old_images), len(new_images)
-        )
-
+        old_count = _get_page_count(old_bytes)
+        new_count = _get_page_count(new_bytes)
     except Exception as e:
-        logger.error("Fout bij het laden van PDF's: %s", str(e))
+        logger.error("Fout bij het lezen van PDF info: %s", str(e))
         return JSONResponse(
             status_code=500,
             content={
                 "status": "error",
-                "detail": f"Fout bij het verwerken van de PDF bestanden: {str(e)}",
+                "detail": f"Kan PDF info niet lezen: {str(e)}",
             },
         )
-    finally:
-        # Tijdelijke bestanden opruimen
-        try:
-            tmp_old_path.unlink(missing_ok=True)
-        except Exception:
-            pass
-        try:
-            tmp_new_path.unlink(missing_ok=True)
-        except Exception:
-            pass
 
-    old_count = len(old_images)
-    new_count = len(new_images)
     max_pages = max(old_count, new_count)
+    logger.info("Pagina's geteld: oud=%d, nieuw=%d", old_count, new_count)
 
     comparisons: list[dict[str, Any]] = []
 
-    # Pagina's sequentieel vergelijken
-    for i in range(max_pages):
-        page_num = i + 1
-        old_img = old_images[i] if i < old_count else None
-        new_img = new_images[i] if i < new_count else None
+    # Per pagina: converteer, vergelijk, ruim op
+    for i in range(1, max_pages + 1):
+        logger.info("[pagina %d/%d] Start verwerking...", i, max_pages)
 
-        logger.info("Pagina %d/%d verwerken...", page_num, max_pages)
+        old_img = None
+        new_img = None
 
         try:
-            result = compare_page(old_img, new_img, page_num, sensitivity)
+            # Alleen converteren als de pagina bestaat in die PDF
+            if i <= old_count:
+                old_img = convert_from_bytes(
+                    old_bytes, dpi=dpi, first_page=i, last_page=i
+                )[0]
+
+            if i <= new_count:
+                new_img = convert_from_bytes(
+                    new_bytes, dpi=dpi, first_page=i, last_page=i
+                )[0]
+
+            logger.info("[pagina %d/%d] Geconverteerd, start vergelijking...", i, max_pages)
+
+            result = compare_page(old_img, new_img, i, sensitivity)
             comparisons.append(result)
+
+            logger.info(
+                "[pagina %d/%d] Klaar — status=%s, wijziging=%.2f%%",
+                i, max_pages, result["status"], result["change_percentage"],
+            )
+
         except Exception as e:
-            logger.error("Fout bij pagina %d: %s", page_num, str(e))
+            logger.error("[pagina %d/%d] FOUT: %s", i, max_pages, str(e))
             comparisons.append(
                 {
-                    "page": page_num,
+                    "page": i,
                     "status": "error",
                     "changes_detected": False,
                     "change_percentage": 0.0,
                     "diff_image": None,
                     "overlay_image": None,
-                    "error": f"Verwerkingsfout op pagina {page_num}: {str(e)}",
+                    "error": f"Verwerkingsfout op pagina {i}: {str(e)}",
                 }
             )
 
-        # Verwerkte afbeeldingen vrijgeven
-        if old_img is not None:
-            old_img.close()
-        if new_img is not None and (i >= old_count or old_img is not new_img):
-            new_img.close()
+        finally:
+            # Afbeeldingen direct vrijgeven
+            if old_img is not None:
+                old_img.close()
+                del old_img
+            if new_img is not None:
+                new_img.close()
+                del new_img
+            gc.collect()
+
+    # PDF bytes vrijgeven
+    del old_bytes, new_bytes
+    gc.collect()
 
     logger.info("Vergelijking voltooid: %d pagina's verwerkt", max_pages)
 
