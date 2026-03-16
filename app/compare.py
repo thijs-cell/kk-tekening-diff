@@ -9,16 +9,18 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from .alignment import align_images
+from .alignment import align_images, compute_homography
 from .config import (
     BBOX_LINE_THICKNESS,
     BBOX_PADDING,
+    ENABLE_AI_INTERPRETATION,
     MIN_CONTOUR_AREA,
     MORPH_ITERATIONS,
     MORPH_KERNEL_SIZE,
     OVERLAY_ALPHA,
     TITLE_BLOCK_MASK_PERCENT,
 )
+from .interpreter import interpret_page
 
 logger = logging.getLogger(__name__)
 
@@ -217,6 +219,24 @@ def compare_page(
     # Overlay afbeelding genereren
     overlay = _create_overlay(new_bgr, diff_masked)
     result["overlay_image"] = _cv2_to_base64_png(overlay)
+
+    # AI interpretatie van wijzigingen
+    if ENABLE_AI_INTERPRETATION:
+        old_bgr_raw = _pil_to_cv2_bgr(old_img)
+        H = compute_homography(
+            _pil_to_cv2_gray(old_img), new_gray
+        )
+        if H is not None:
+            aligned_old_bgr = cv2.warpPerspective(old_bgr_raw, H, (w, h))
+        else:
+            aligned_old_bgr = old_bgr_raw
+
+        result["interpretations"] = interpret_page(
+            aligned_old_bgr, new_bgr, diff_masked, page_num
+        )
+        del old_bgr_raw, aligned_old_bgr
+    else:
+        result["interpretations"] = []
 
     # Geheugen vrijgeven
     del aligned_old, diff_raw, diff_thresh, diff_clean, diff_masked

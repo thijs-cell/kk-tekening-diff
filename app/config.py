@@ -3,6 +3,14 @@
 import os
 
 
+def _bool_env(key: str, default: bool) -> bool:
+    """Lees een boolean environment variable met fallback."""
+    val = os.getenv(key)
+    if val is None:
+        return default
+    return val.lower() in ("true", "1", "yes")
+
+
 def _int_env(key: str, default: int) -> int:
     """Lees een integer environment variable met fallback."""
     val = os.getenv(key)
@@ -51,3 +59,8 @@ MIN_CONTOUR_AREA: int = _int_env("MIN_CONTOUR_AREA", 100)
 # Morphologische kernel
 MORPH_KERNEL_SIZE: int = _int_env("MORPH_KERNEL_SIZE", 3)
 MORPH_ITERATIONS: int = _int_env("MORPH_ITERATIONS", 2)
+
+# AI interpretatie (Claude Vision)
+ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
+ANTHROPIC_MODEL: str = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+ENABLE_AI_INTERPRETATION: bool = _bool_env("ENABLE_AI_INTERPRETATION", True)

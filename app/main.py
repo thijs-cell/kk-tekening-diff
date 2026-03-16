@@ -269,6 +269,54 @@ async def results_page() -> HTMLResponse:
                 "Geen overlay beschikbaar</div>"
             )
 
+        # Interpretaties HTML
+        interp_html = ""
+        interpretations = comp.get("interpretations", [])
+        if interpretations:
+            interp_items = ""
+            for interp in interpretations:
+                cls = interp.get("classification", "INFORMATIEF")
+                desc = interp.get("description", "")
+                crop_b64 = interp.get("crop_image", "")
+
+                if cls == "KRITIEK":
+                    badge_cls = (
+                        "background:#c0392b;color:#fff;padding:2px 8px;"
+                        "border-radius:8px;font-size:12px;font-weight:600;"
+                    )
+                else:
+                    badge_cls = (
+                        "background:#95a5a6;color:#fff;padding:2px 8px;"
+                        "border-radius:8px;font-size:12px;font-weight:600;"
+                    )
+
+                crop_html = ""
+                if crop_b64:
+                    crop_html = (
+                        f'<img src="data:image/png;base64,{crop_b64}" '
+                        f'style="height:80px;border:1px solid #ddd;border-radius:4px;'
+                        f'cursor:pointer;flex-shrink:0;" '
+                        f'onclick="window.open(this.src)" '
+                        f'alt="Crop"/>'
+                    )
+
+                interp_items += f"""
+                <div style="display:flex;align-items:flex-start;gap:12px;
+                    padding:8px 0;border-bottom:1px solid #eee;">
+                    {crop_html}
+                    <div style="flex:1;">
+                        <span style="{badge_cls}">{cls}</span>
+                        <span style="margin-left:8px;">{desc}</span>
+                    </div>
+                </div>"""
+
+            interp_html = f"""
+            <div style="margin-top:12px;padding:12px;background:#fff;
+                border:1px solid #ddd;border-radius:6px;">
+                <h3 style="margin:0 0 8px 0;font-size:16px;">AI Interpretatie</h3>
+                {interp_items}
+            </div>"""
+
         cards_html += f"""
         <div style="margin-bottom:32px;">
             <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
@@ -277,6 +325,7 @@ async def results_page() -> HTMLResponse:
                     border-radius:12px;font-size:14px;font-weight:500;">{badge_text}</span>
             </div>
             {img_html}
+            {interp_html}
         </div>"""
 
     html = f"""<!DOCTYPE html>

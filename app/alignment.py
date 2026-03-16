@@ -93,3 +93,53 @@ def align_images(
     aligned = cv2.warpPerspective(old_gray, matrix, (w, h))
 
     return aligned, True
+
+
+def compute_homography(
+    old_gray: np.ndarray,
+    new_gray: np.ndarray,
+) -> Optional[np.ndarray]:
+    """
+    Bereken alleen de homografie matrix zonder de afbeelding te warpen.
+
+    Returns:
+        3x3 homografie matrix, of None bij falen.
+    """
+    orb = cv2.ORB_create(nfeatures=ORB_FEATURES)
+    kp_old, desc_old = orb.detectAndCompute(old_gray, None)
+    kp_new, desc_new = orb.detectAndCompute(new_gray, None)
+
+    if desc_old is None or desc_new is None:
+        return None
+    if len(kp_old) < MIN_GOOD_MATCHES or len(kp_new) < MIN_GOOD_MATCHES:
+        return None
+
+    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
+    matches = bf.knnMatch(desc_old, desc_new, k=2)
+
+    good_matches: list[cv2.DMatch] = []
+    for match_pair in matches:
+        if len(match_pair) == 2:
+            m, n = match_pair
+            if m.distance < 0.75 * n.distance:
+                good_matches.append(m)
+
+    if len(good_matches) < MIN_GOOD_MATCHES:
+        return None
+
+    src_pts = np.float32(
+        [kp_old[m.queryIdx].pt for m in good_matches]
+    ).reshape(-1, 1, 2)
+    dst_pts = np.float32(
+        [kp_new[m.trainIdx].pt for m in good_matches]
+    ).reshape(-1, 1, 2)
+
+    matrix, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, RANSAC_THRESHOLD)
+    if matrix is None:
+        return None
+
+    inliers = int(mask.sum()) if mask is not None else 0
+    if inliers < MIN_GOOD_MATCHES:
+        return None
+
+    return matrix
