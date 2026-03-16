@@ -37,7 +37,7 @@ def _float_env(key: str, default: float) -> float:
 DPI: int = _int_env("DPI", 200)
 
 # Drempelwaarde voor verschildetectie (0-255)
-SENSITIVITY: int = _int_env("SENSITIVITY", 30)
+SENSITIVITY: int = _int_env("SENSITIVITY", 15)
 
 # Percentage van de rechterkant dat gemaskeerd wordt (titelblok)
 TITLE_BLOCK_MASK_PERCENT: float = _float_env("TITLE_BLOCK_MASK_PERCENT", 12.0)

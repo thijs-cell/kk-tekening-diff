@@ -84,6 +84,11 @@ async def compare_pdfs(
         le=255,
         description="Verschildrempel (lager = gevoeliger)",
     ),
+    max_pages: int | None = Query(
+        default=None,
+        ge=1,
+        description="Maximaal aantal pagina's om te verwerken (optioneel)",
+    ),
 ) -> JSONResponse:
     """
     Vergelijk twee PDF bouwtekeningen en detecteer wijzigingen per pagina.
@@ -130,14 +135,16 @@ async def compare_pdfs(
             },
         )
 
-    max_pages = max(old_count, new_count)
-    logger.info("Pagina's geteld: oud=%d, nieuw=%d", old_count, new_count)
+    total_pages = max(old_count, new_count)
+    if max_pages is not None:
+        total_pages = min(total_pages, max_pages)
+    logger.info("Pagina's geteld: oud=%d, nieuw=%d, verwerk=%d", old_count, new_count, total_pages)
 
     comparisons: list[dict[str, Any]] = []
 
     # Per pagina: converteer, vergelijk, ruim op
-    for i in range(1, max_pages + 1):
-        logger.info("[pagina %d/%d] Start verwerking...", i, max_pages)
+    for i in range(1, total_pages + 1):
+        logger.info("[pagina %d/%d] Start verwerking...", i, total_pages)
 
         old_img = None
         new_img = None
@@ -154,18 +161,18 @@ async def compare_pdfs(
                     new_bytes, dpi=dpi, first_page=i, last_page=i
                 )[0]
 
-            logger.info("[pagina %d/%d] Geconverteerd, start vergelijking...", i, max_pages)
+            logger.info("[pagina %d/%d] Geconverteerd, start vergelijking...", i, total_pages)
 
             result = compare_page(old_img, new_img, i, sensitivity)
             comparisons.append(result)
 
             logger.info(
                 "[pagina %d/%d] Klaar — status=%s, wijziging=%.2f%%",
-                i, max_pages, result["status"], result["change_percentage"],
+                i, total_pages, result["status"], result["change_percentage"],
             )
 
         except Exception as e:
-            logger.error("[pagina %d/%d] FOUT: %s", i, max_pages, str(e))
+            logger.error("[pagina %d/%d] FOUT: %s", i, total_pages, str(e))
             comparisons.append(
                 {
                     "page": i,
@@ -192,7 +199,7 @@ async def compare_pdfs(
     del old_bytes, new_bytes
     gc.collect()
 
-    logger.info("Vergelijking voltooid: %d pagina's verwerkt", max_pages)
+    logger.info("Vergelijking voltooid: %d pagina's verwerkt", total_pages)
 
     # Resultaat opslaan voor /results endpoint
     global _last_result
@@ -279,26 +286,22 @@ async def results_page() -> HTMLResponse:
                 "Geen overlay beschikbaar</div>"
             )
 
-        # Interpretaties HTML
+        # Interpretaties HTML — alleen KRITIEK tonen
         interp_html = ""
         interpretations = comp.get("interpretations", [])
-        if interpretations:
+        kritiek_items = [
+            i for i in interpretations if i.get("classification") == "KRITIEK"
+        ]
+        if kritiek_items:
             interp_items = ""
-            for interp in interpretations:
-                cls = interp.get("classification", "INFORMATIEF")
+            for interp in kritiek_items:
                 desc = interp.get("description", "")
                 crop_b64 = interp.get("crop_image", "")
 
-                if cls == "KRITIEK":
-                    badge_cls = (
-                        "background:#c0392b;color:#fff;padding:2px 8px;"
-                        "border-radius:8px;font-size:12px;font-weight:600;"
-                    )
-                else:
-                    badge_cls = (
-                        "background:#95a5a6;color:#fff;padding:2px 8px;"
-                        "border-radius:8px;font-size:12px;font-weight:600;"
-                    )
+                badge_cls = (
+                    "background:#c0392b;color:#fff;padding:2px 8px;"
+                    "border-radius:8px;font-size:12px;font-weight:600;"
+                )
 
                 crop_html = ""
                 if crop_b64:
@@ -315,7 +318,7 @@ async def results_page() -> HTMLResponse:
                     padding:8px 0;border-bottom:1px solid #eee;">
                     {crop_html}
                     <div style="flex:1;">
-                        <span style="{badge_cls}">{cls}</span>
+                        <span style="{badge_cls}">KRITIEK</span>
                         <span style="margin-left:8px;">{desc}</span>
                     </div>
                 </div>"""

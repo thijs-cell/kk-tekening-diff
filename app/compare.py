@@ -206,7 +206,7 @@ def compare_page(
 
     result["change_percentage"] = change_pct
 
-    if changed_pixels == 0:
+    if changed_pixels == 0 or change_pct < 0.05:
         result["status"] = "no_changes"
         result["changes_detected"] = False
         return result

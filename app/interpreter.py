@@ -17,31 +17,48 @@ from .config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, MIN_CONTOUR_AREA
 logger = logging.getLogger(__name__)
 
 VISION_PROMPT = (
-    "Je bent een expert in het lezen van bouwtekeningen, specifiek "
-    "demarcatietekeningen voor gibowanden. Je krijgt twee uitsnedes van "
-    "dezelfde locatie op een plattegrond: links de oude versie, rechts de "
-    "nieuwe versie.\n\n"
-    "Beschrijf precies wat er veranderd is. Let specifiek op:\n"
-    "- Wandverschuivingen (positie veranderd)\n"
-    "- Wanddiktes (bijv. van 100mm naar 70mm)\n"
-    "- Materiaalcodes (bijv. GNL70 naar GZL70, GHL50 naar GHL100)\n"
-    "- Maatvoering (gewijzigde afmetingen)\n"
-    "- Toegevoegde of verwijderde elementen (sparingen, deuren, wanden)\n"
-    "- Gewijzigde arceringen\n\n"
-    "Geef per wijziging:\n"
-    "1. Een korte beschrijving in het Nederlands (max 2 zinnen)\n"
-    "2. Een classificatie: KRITIEK (impact op uitvoering: wandverschuiving, "
-    "maatwijziging, materiaalwijziging, toegevoegd/verwijderd element) of "
-    "INFORMATIEF (geen directe impact: label verschoven, arcering anders, "
-    "revisienummer)\n\n"
-    "Als je niet kunt bepalen wat er veranderd is (te onduidelijk, te klein), "
-    "zeg dat eerlijk.\n\n"
+    "Je bent een expert in het lezen van demarcatietekeningen voor gibowanden "
+    "bij woningbouwprojecten. Je krijgt twee uitsnedes van dezelfde locatie op "
+    "een plattegrond: links de oude versie, rechts de nieuwe versie.\n\n"
+    "Analyseer de verschillen met deze prioriteiten:\n\n"
+    "KRITIEK (direct impact op uitvoering, ALTIJD melden):\n"
+    "- Wanddiktes: herken visueel of een wand dikker of dunner is geworden, "
+    "ook als er geen maat bij staat. Typische diktes zijn 50, 70 en 100mm. "
+    "Een dikkere lijn betekent een dikkere wand.\n"
+    "- Maatvoering: elk gewijzigd getal is kritiek. Let specifiek op "
+    "afmetingen in millimeters.\n"
+    "- Kozijnhoogtes: getallen tussen 2060 en 2364mm bepalen of er giebouw "
+    "boven een kozijn komt. Een verschil van zelfs 10mm kan de bouwkeuze "
+    "veranderen.\n"
+    "- Wandverschuivingen: als een wand van positie is veranderd.\n"
+    "- Indelingswijzigingen: toegevoegde of verwijderde kamers, muren, "
+    "badkamer of slaapkamer aanpassingen.\n"
+    "- Sparingen: toegevoegd, verwijderd of verplaatst.\n"
+    "- Materiaalcodes: wijzigingen in codes zoals GNL70, GZL70, GHL70, "
+    "GHL50, GHL100.\n\n"
+    "NEGEREN (niet vermelden, overslaan):\n"
+    "- Verschoven labels of tekst zonder inhoudelijke wijziging.\n"
+    "- Gewijzigde arceringen of kleurcoderingen zonder bouwkundige impact.\n"
+    "- Andere annotaties.\n"
+    "- Minimale pixelverschillen zonder zichtbare bouwkundige wijziging.\n"
+    "- Render artefacten of lichte kleurverschillen.\n"
+    "- Revisienummers, datums, titelblok wijzigingen.\n\n"
+    "BELANGRIJK:\n"
+    "- Als je een wanddikte verschil ziet maar geen exact getal kunt lezen, "
+    "beschrijf dan wat je visueel ziet (bijv. 'wand lijkt dunner geworden, "
+    "mogelijk van 100 naar 70mm').\n"
+    "- Kleine getalverschillen zijn ALTIJD kritiek bij maatvoering en "
+    "kozijnhoogtes.\n"
+    "- Als je niet kunt bepalen wat er veranderd is, zeg dat eerlijk en "
+    "classificeer als KRITIEK met een vraagteken.\n"
+    "- Wees liever te voorzichtig dan dat je iets mist. Bij twijfel: "
+    "KRITIEK.\n\n"
     'Antwoord in JSON:\n'
     '{\n'
     '  "changes": [\n'
     '    {\n'
-    '      "description": "Wanddikte gewijzigd van 100mm naar 70mm",\n'
-    '      "classification": "KRITIEK"\n'
+    '      "description": "beschrijving in het Nederlands, max 2 zinnen",\n'
+    '      "classification": "KRITIEK" of "NEGEREN"\n'
     '    }\n'
     '  ]\n'
     '}\n'
@@ -259,8 +276,8 @@ def _call_claude_vision(
         for c in changes:
             if "description" in c and "classification" in c:
                 classification = c["classification"].upper()
-                if classification not in ("KRITIEK", "INFORMATIEF"):
-                    classification = "INFORMATIEF"
+                if classification not in ("KRITIEK", "NEGEREN"):
+                    classification = "NEGEREN"
                 valid.append({
                     "description": c["description"],
                     "classification": classification,
@@ -350,6 +367,8 @@ def interpret_page(
         changes = _call_claude_vision(client, crop_b64, page_num, idx)
 
         for change in changes:
+            if change["classification"] == "NEGEREN":
+                continue
             interpretations.append({
                 "region": {"x": x, "y": y, "width": w, "height": h},
                 "crop_image": crop_b64,
