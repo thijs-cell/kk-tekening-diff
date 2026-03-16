@@ -2,6 +2,7 @@
 
 import gc
 import logging
+import os
 from typing import Any
 
 from fastapi import FastAPI, File, Query, UploadFile
@@ -9,7 +10,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pdf2image import convert_from_bytes, pdfinfo_from_bytes
 
 from .compare import compare_page
-from .config import DPI, MAX_FILE_SIZE_MB, SENSITIVITY
+from .config import ANTHROPIC_API_KEY, DPI, ENABLE_AI_INTERPRETATION, MAX_FILE_SIZE_MB, SENSITIVITY
 
 # Logging configureren
 logging.basicConfig(
@@ -17,6 +18,15 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# Startup check: toon of de API key geladen is
+_raw_key = os.environ.get("ANTHROPIC_API_KEY")
+if _raw_key:
+    logger.info("ANTHROPIC_API_KEY geladen: %s...", _raw_key[:10])
+else:
+    logger.warning("ANTHROPIC_API_KEY NIET gevonden in environment variables")
+logger.info("ENABLE_AI_INTERPRETATION=%s, ANTHROPIC_API_KEY config=%s...",
+            ENABLE_AI_INTERPRETATION, ANTHROPIC_API_KEY[:10] if ANTHROPIC_API_KEY else "(leeg)")
 
 app = FastAPI(
     title="K&K Tekening Diff",
