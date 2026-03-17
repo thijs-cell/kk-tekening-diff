@@ -64,3 +64,11 @@ MORPH_ITERATIONS: int = _int_env("MORPH_ITERATIONS", 2)
 ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL: str = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
 ENABLE_AI_INTERPRETATION: bool = _bool_env("ENABLE_AI_INTERPRETATION", True)
+
+# Strook-gebaseerde interpretatie
+NUM_STRIPS: int = _int_env("NUM_STRIPS", 6)
+STRIP_DPI: int = _int_env("STRIP_DPI", 300)
+MAX_STRIP_IMAGE_BYTES: int = _int_env("MAX_STRIP_IMAGE_BYTES", 4_500_000)
+
+# Verschuivingsdetectie
+DISPLACEMENT_MATCH_RADIUS_PX: int = _int_env("DISPLACEMENT_MATCH_RADIUS_PX", 200)

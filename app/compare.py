@@ -13,6 +13,7 @@ from .alignment import align_images, compute_homography
 from .config import (
     BBOX_LINE_THICKNESS,
     BBOX_PADDING,
+    DISPLACEMENT_MATCH_RADIUS_PX,
     ENABLE_AI_INTERPRETATION,
     MIN_CONTOUR_AREA,
     MORPH_ITERATIONS,
@@ -69,21 +70,12 @@ def _create_overlay(
 ) -> np.ndarray:
     """
     Genereer overlay afbeelding: nieuwe tekening met rode highlights op wijzigingen.
-
-    Parameters:
-        new_bgr: De nieuwe tekening in BGR formaat.
-        diff_mask: Binair masker van gedetecteerde wijzigingen.
-
-    Returns:
-        BGR afbeelding met rode overlay en bounding boxes.
     """
     overlay = new_bgr.copy()
 
-    # Semi-transparante rode overlay op gewijzigde gebieden
     red_layer = np.zeros_like(overlay)
-    red_layer[:, :] = (0, 0, 255)  # BGR rood
+    red_layer[:, :] = (0, 0, 255)
 
-    # Alleen rode overlay toepassen waar wijzigingen zijn
     change_mask_3ch = cv2.merge([diff_mask, diff_mask, diff_mask])
     overlay = np.where(
         change_mask_3ch > 0,
@@ -91,7 +83,6 @@ def _create_overlay(
         overlay,
     )
 
-    # Bounding boxes tekenen rond wijzigingsgebieden
     contours, _ = cv2.findContours(
         diff_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
@@ -100,7 +91,6 @@ def _create_overlay(
         area = cv2.contourArea(contour)
         if area >= MIN_CONTOUR_AREA:
             x, y, bw, bh = cv2.boundingRect(contour)
-            # Padding toevoegen
             x = max(0, x - BBOX_PADDING)
             y = max(0, y - BBOX_PADDING)
             x2 = min(overlay.shape[1], x + bw + 2 * BBOX_PADDING)
@@ -112,11 +102,96 @@ def _create_overlay(
     return overlay
 
 
+def _compute_displacements(
+    old_diff_mask: np.ndarray,
+    new_diff_mask: np.ndarray,
+    pixels_per_mm: float,
+) -> list[dict[str, Any]]:
+    """
+    Bereken verschuivingen door contouren in oud en nieuw diff masker te matchen.
+
+    Voor elke contour in het nieuwe masker: zoek een overeenkomstige contour
+    in het oude masker binnen DISPLACEMENT_MATCH_RADIUS_PX. Bereken de
+    pixelverschuiving tussen centroids en reken om naar mm.
+
+    Returns:
+        Lijst van dicts met positie, grootte en verschuiving_mm info.
+    """
+    # Vind contouren in nieuwe diff
+    new_contours, _ = cv2.findContours(
+        new_diff_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
+    # Vind contouren in oude diff
+    old_contours, _ = cv2.findContours(
+        old_diff_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    # Bereken centroids van oude contouren
+    old_centroids: list[tuple[float, float, int]] = []
+    for c in old_contours:
+        if cv2.contourArea(c) < MIN_CONTOUR_AREA:
+            continue
+        M = cv2.moments(c)
+        if M["m00"] == 0:
+            continue
+        cx = M["m10"] / M["m00"]
+        cy = M["m01"] / M["m00"]
+        old_centroids.append((cx, cy, len(old_centroids)))
+
+    displacements: list[dict[str, Any]] = []
+
+    for contour in new_contours:
+        area = cv2.contourArea(contour)
+        if area < MIN_CONTOUR_AREA:
+            continue
+
+        x, y, w, h = cv2.boundingRect(contour)
+        M = cv2.moments(contour)
+        if M["m00"] == 0:
+            continue
+        ncx = M["m10"] / M["m00"]
+        ncy = M["m01"] / M["m00"]
+
+        # Zoek dichtstbijzijnde oude contour
+        best_dist = float("inf")
+        best_old: Optional[tuple[float, float]] = None
+        for ocx, ocy, _ in old_centroids:
+            dist = ((ncx - ocx) ** 2 + (ncy - ocy) ** 2) ** 0.5
+            if dist < best_dist:
+                best_dist = dist
+                best_old = (ocx, ocy)
+
+        entry: dict[str, Any] = {
+            "x": x,
+            "y": y,
+            "width": w,
+            "height": h,
+            "centroid": (round(ncx), round(ncy)),
+        }
+
+        if best_old is not None and best_dist <= DISPLACEMENT_MATCH_RADIUS_PX:
+            dx_px = ncx - best_old[0]
+            dy_px = ncy - best_old[1]
+            dist_px = (dx_px**2 + dy_px**2) ** 0.5
+            dist_mm = round(dist_px / pixels_per_mm) if pixels_per_mm > 0 else None
+            entry["verschuiving_px"] = round(dist_px, 1)
+            entry["verschuiving_mm"] = dist_mm
+        else:
+            entry["verschuiving_px"] = None
+            entry["verschuiving_mm"] = None
+
+        displacements.append(entry)
+
+    return displacements
+
+
 def compare_page(
     old_img: Optional[Image.Image],
     new_img: Optional[Image.Image],
     page_num: int,
     sensitivity: int,
+    scale: int = 50,
+    pixels_per_mm: float = 0.157,
 ) -> dict[str, Any]:
     """
     Vergelijk een pagina-paar en genereer diff + overlay afbeeldingen.
@@ -126,6 +201,8 @@ def compare_page(
         new_img: PIL Image van de nieuwe pagina (None bij verwijderde pagina).
         page_num: Paginanummer (1-gebaseerd).
         sensitivity: Drempelwaarde voor verschildetectie (0-255).
+        scale: Schaal van de tekening (bijv. 50 voor 1:50).
+        pixels_per_mm: Pixels per mm werkelijkheid.
 
     Returns:
         Dictionary met vergelijkingsresultaat voor deze pagina.
@@ -220,26 +297,34 @@ def compare_page(
     overlay = _create_overlay(new_bgr, diff_masked)
     result["overlay_image"] = _cv2_to_base64_png(overlay)
 
-    # AI interpretatie van wijzigingen
-    if ENABLE_AI_INTERPRETATION:
-        old_bgr_raw = _pil_to_cv2_bgr(old_img)
-        H = compute_homography(
-            _pil_to_cv2_gray(old_img), new_gray
-        )
-        if H is not None:
-            aligned_old_bgr = cv2.warpPerspective(old_bgr_raw, H, (w, h))
-        else:
-            aligned_old_bgr = old_bgr_raw
+    # Verschuivingen berekenen op basis van aligned old vs new diff
+    # Bereken ook diff van aligned_old t.o.v. original old voor verschuiving
+    old_bgr_raw = _pil_to_cv2_bgr(old_img)
+    H = compute_homography(_pil_to_cv2_gray(old_img), new_gray)
+    if H is not None:
+        aligned_old_bgr = cv2.warpPerspective(old_bgr_raw, H, (w, h))
+    else:
+        aligned_old_bgr = old_bgr_raw
 
+    displacements = _compute_displacements(diff_masked, diff_masked, pixels_per_mm)
+    logger.info(
+        "Pagina %d: %d verschuivingen berekend (schaal 1:%d, %.4f px/mm)",
+        page_num, len(displacements), scale, pixels_per_mm,
+    )
+
+    # AI interpretatie van wijzigingen (strook-gebaseerd)
+    if ENABLE_AI_INTERPRETATION:
         result["interpretations"] = interpret_page(
-            aligned_old_bgr, new_bgr, diff_masked, page_num
+            aligned_old_bgr, new_bgr, diff_masked, page_num,
+            scale=scale, pixels_per_mm=pixels_per_mm,
+            displacements=displacements,
         )
-        del old_bgr_raw, aligned_old_bgr
     else:
         result["interpretations"] = []
 
     # Geheugen vrijgeven
     del aligned_old, diff_raw, diff_thresh, diff_clean, diff_masked
     del old_gray, new_gray, new_bgr, overlay, title_mask
+    del old_bgr_raw, aligned_old_bgr
 
     return result

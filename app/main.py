@@ -10,7 +10,15 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pdf2image import convert_from_bytes, pdfinfo_from_bytes
 
 from .compare import compare_page
-from .config import ANTHROPIC_API_KEY, DPI, ENABLE_AI_INTERPRETATION, MAX_FILE_SIZE_MB, SENSITIVITY
+from .config import (
+    ANTHROPIC_API_KEY,
+    DPI,
+    ENABLE_AI_INTERPRETATION,
+    MAX_FILE_SIZE_MB,
+    SENSITIVITY,
+    STRIP_DPI,
+)
+from .scale_reader import SCALE_DPI, calculate_pixels_per_mm, read_scale
 
 # Logging configureren
 logging.basicConfig(
@@ -25,13 +33,16 @@ if _raw_key:
     logger.info("ANTHROPIC_API_KEY geladen: %s...", _raw_key[:10])
 else:
     logger.warning("ANTHROPIC_API_KEY NIET gevonden in environment variables")
-logger.info("ENABLE_AI_INTERPRETATION=%s, ANTHROPIC_API_KEY config=%s...",
-            ENABLE_AI_INTERPRETATION, ANTHROPIC_API_KEY[:10] if ANTHROPIC_API_KEY else "(leeg)")
+logger.info(
+    "ENABLE_AI_INTERPRETATION=%s, ANTHROPIC_API_KEY config=%s...",
+    ENABLE_AI_INTERPRETATION,
+    ANTHROPIC_API_KEY[:10] if ANTHROPIC_API_KEY else "(leeg)",
+)
 
 app = FastAPI(
     title="K&K Tekening Diff",
     description="Vergelijk PDF bouwtekeningen en detecteer wijzigingen per pagina.",
-    version="1.0.0",
+    version="2.0.0",
 )
 
 # PDF magic bytes: %PDF
@@ -42,12 +53,7 @@ _last_result: dict[str, Any] | None = None
 
 
 def _validate_pdf(content: bytes, filename: str) -> str | None:
-    """
-    Valideer of het bestand een PDF is.
-
-    Returns:
-        Foutmelding string bij fout, None als alles ok is.
-    """
+    """Valideer of het bestand een PDF is."""
     if not content.startswith(PDF_MAGIC):
         return f"Bestand '{filename}' is geen geldig PDF bestand."
 
@@ -67,10 +73,25 @@ def _get_page_count(pdf_bytes: bytes) -> int:
     return info.get("Pages", 0)
 
 
+def _read_scale_from_pdf(pdf_bytes: bytes) -> int:
+    """Lees de schaal uit de eerste pagina van een PDF via Claude Vision."""
+    try:
+        pages = convert_from_bytes(pdf_bytes, dpi=SCALE_DPI, first_page=1, last_page=1)
+        if pages:
+            scale = read_scale(pages[0])
+            pages[0].close()
+            del pages
+            gc.collect()
+            return scale
+    except Exception as e:
+        logger.error("Schaal lezen mislukt: %s", str(e))
+    return 50
+
+
 @app.get("/")
 async def health_check() -> dict[str, str]:
     """Health check endpoint."""
-    return {"status": "online", "version": "1.0.0"}
+    return {"status": "online", "version": "2.0.0"}
 
 
 @app.post("/compare")
@@ -89,12 +110,12 @@ async def compare_pdfs(
         ge=1,
         description="Maximaal aantal pagina's om te verwerken (optioneel)",
     ),
+    lite: bool = Query(
+        default=False,
+        description="Lite modus: geen afbeeldingen in response (voor n8n)",
+    ),
 ) -> JSONResponse:
-    """
-    Vergelijk twee PDF bouwtekeningen en detecteer wijzigingen per pagina.
-
-    Verwerkt per pagina: converteer, vergelijk, sla op, ruim geheugen op.
-    """
+    """Vergelijk twee PDF bouwtekeningen en detecteer wijzigingen per pagina."""
     # Bestanden inlezen
     old_bytes = await old_pdf.read()
     new_bytes = await new_pdf.read()
@@ -113,12 +134,9 @@ async def compare_pdfs(
 
     logger.info(
         "Vergelijking gestart: '%s' (%d KB) vs '%s' (%d KB), DPI=%d, sensitivity=%d",
-        old_filename,
-        len(old_bytes) // 1024,
-        new_filename,
-        len(new_bytes) // 1024,
-        dpi,
-        sensitivity,
+        old_filename, len(old_bytes) // 1024,
+        new_filename, len(new_bytes) // 1024,
+        dpi, sensitivity,
     )
 
     # Aantal pagina's tellen ZONDER te renderen
@@ -129,16 +147,18 @@ async def compare_pdfs(
         logger.error("Fout bij het lezen van PDF info: %s", str(e))
         return JSONResponse(
             status_code=500,
-            content={
-                "status": "error",
-                "detail": f"Kan PDF info niet lezen: {str(e)}",
-            },
+            content={"status": "error", "detail": f"Kan PDF info niet lezen: {str(e)}"},
         )
 
     total_pages = max(old_count, new_count)
     if max_pages is not None:
         total_pages = min(total_pages, max_pages)
     logger.info("Pagina's geteld: oud=%d, nieuw=%d, verwerk=%d", old_count, new_count, total_pages)
+
+    # Schaal lezen (1x per vergelijking, niet per pagina)
+    scale = _read_scale_from_pdf(new_bytes)
+    pixels_per_mm = calculate_pixels_per_mm(dpi, scale)
+    logger.info("Schaal: 1:%d, pixels_per_mm: %.4f (bij DPI %d)", scale, pixels_per_mm, dpi)
 
     comparisons: list[dict[str, Any]] = []
 
@@ -150,7 +170,6 @@ async def compare_pdfs(
         new_img = None
 
         try:
-            # Alleen converteren als de pagina bestaat in die PDF
             if i <= old_count:
                 old_img = convert_from_bytes(
                     old_bytes, dpi=dpi, first_page=i, last_page=i
@@ -163,7 +182,10 @@ async def compare_pdfs(
 
             logger.info("[pagina %d/%d] Geconverteerd, start vergelijking...", i, total_pages)
 
-            result = compare_page(old_img, new_img, i, sensitivity)
+            result = compare_page(
+                old_img, new_img, i, sensitivity,
+                scale=scale, pixels_per_mm=pixels_per_mm,
+            )
             comparisons.append(result)
 
             logger.info(
@@ -173,20 +195,17 @@ async def compare_pdfs(
 
         except Exception as e:
             logger.error("[pagina %d/%d] FOUT: %s", i, total_pages, str(e))
-            comparisons.append(
-                {
-                    "page": i,
-                    "status": "error",
-                    "changes_detected": False,
-                    "change_percentage": 0.0,
-                    "diff_image": None,
-                    "overlay_image": None,
-                    "error": f"Verwerkingsfout op pagina {i}: {str(e)}",
-                }
-            )
+            comparisons.append({
+                "page": i,
+                "status": "error",
+                "changes_detected": False,
+                "change_percentage": 0.0,
+                "diff_image": None,
+                "overlay_image": None,
+                "error": f"Verwerkingsfout op pagina {i}: {str(e)}",
+            })
 
         finally:
-            # Afbeeldingen direct vrijgeven
             if old_img is not None:
                 old_img.close()
                 del old_img
@@ -195,13 +214,12 @@ async def compare_pdfs(
                 del new_img
             gc.collect()
 
-    # PDF bytes vrijgeven
     del old_bytes, new_bytes
     gc.collect()
 
     logger.info("Vergelijking voltooid: %d pagina's verwerkt", total_pages)
 
-    # Resultaat opslaan voor /results endpoint
+    # Resultaat opslaan voor /results endpoint (altijd volledig)
     global _last_result
     _last_result = {
         "status": "success",
@@ -209,10 +227,112 @@ async def compare_pdfs(
         "new_pages": new_count,
         "old_filename": old_filename,
         "new_filename": new_filename,
+        "scale": scale,
         "comparisons": comparisons,
     }
 
+    if lite:
+        lite_comparisons = []
+        for comp in comparisons:
+            lite_comp: dict[str, Any] = {
+                "page": comp["page"],
+                "status": comp["status"],
+                "changes_detected": comp["changes_detected"],
+                "change_percentage": comp["change_percentage"],
+            }
+            if "interpretations" in comp:
+                lite_comp["interpretations"] = [
+                    {
+                        "type": interp.get("type", ""),
+                        "description": interp.get("description", ""),
+                        "location": interp.get("location", ""),
+                    }
+                    for interp in comp["interpretations"]
+                ]
+            lite_comparisons.append(lite_comp)
+
+        return JSONResponse(content={
+            "status": "success",
+            "old_pages": old_count,
+            "new_pages": new_count,
+            "scale": scale,
+            "comparisons": lite_comparisons,
+        })
+
     return JSONResponse(content=_last_result)
+
+
+# Badge kleuren per wijzigingstype
+_BADGE_COLORS: dict[str, str] = {
+    "WANDDIKTE": "#c0392b",       # rood
+    "MAATVOERING": "#e67e22",     # oranje
+    "KOZIJNHOOGTE": "#8e44ad",    # paars
+    "WANDVERSCHUIVING": "#2980b9", # blauw
+    "INDELING": "#27ae60",        # groen
+    "SPARING": "#17a2b8",         # cyaan
+    "MATERIAALCODE": "#f1c40f",   # geel
+}
+
+
+def _build_interpretations_html(interpretations: list[dict[str, Any]]) -> str:
+    """Bouw HTML voor interpretaties, gegroepeerd per type."""
+    if not interpretations:
+        return ""
+
+    # Groepeer per type
+    by_type: dict[str, list[dict[str, Any]]] = {}
+    for interp in interpretations:
+        t = interp.get("type", "OVERIG")
+        by_type.setdefault(t, []).append(interp)
+
+    # Volgorde: WANDDIKTE, MAATVOERING, KOZIJNHOOGTE, WANDVERSCHUIVING, INDELING, SPARING, MATERIAALCODE
+    type_order = [
+        "WANDDIKTE", "MAATVOERING", "KOZIJNHOOGTE",
+        "WANDVERSCHUIVING", "INDELING", "SPARING", "MATERIAALCODE",
+    ]
+
+    items_html = ""
+    for change_type in type_order:
+        changes = by_type.get(change_type, [])
+        if not changes:
+            continue
+
+        color = _BADGE_COLORS.get(change_type, "#999")
+        # Contrastkleur voor tekst
+        text_color = "#000" if change_type == "MATERIAALCODE" else "#fff"
+
+        for change in changes:
+            desc = change.get("description", "")
+            location = change.get("location", "")
+            loc_html = (
+                f'<span style="color:#888;font-size:13px;margin-left:8px;">'
+                f'{location}</span>'
+                if location else ""
+            )
+
+            items_html += f"""
+                <div style="display:flex;align-items:flex-start;gap:12px;
+                    padding:8px 0;border-bottom:1px solid #eee;">
+                    <div style="flex:1;">
+                        <span style="background:{color};color:{text_color};
+                            padding:2px 10px;border-radius:8px;font-size:12px;
+                            font-weight:600;white-space:nowrap;">{change_type}</span>
+                        <span style="margin-left:8px;">{desc}</span>
+                        {loc_html}
+                    </div>
+                </div>"""
+
+    if not items_html:
+        return ""
+
+    return f"""
+        <div style="margin-top:12px;padding:12px;background:#fff;
+            border:1px solid #ddd;border-radius:6px;">
+            <h3 style="margin:0 0 8px 0;font-size:16px;">
+                Wijzigingen ({len(interpretations)})
+            </h3>
+            {items_html}
+        </div>"""
 
 
 @app.get("/results", response_class=HTMLResponse)
@@ -230,9 +350,9 @@ async def results_page() -> HTMLResponse:
     new_name = _last_result.get("new_filename", "onbekend")
     old_pages = _last_result.get("old_pages", 0)
     new_pages = _last_result.get("new_pages", 0)
+    scale = _last_result.get("scale", "?")
     comparisons = _last_result.get("comparisons", [])
 
-    # HTML opbouwen
     cards_html = ""
     for comp in comparisons:
         page = comp["page"]
@@ -286,49 +406,10 @@ async def results_page() -> HTMLResponse:
                 "Geen overlay beschikbaar</div>"
             )
 
-        # Interpretaties HTML — alleen KRITIEK tonen
-        interp_html = ""
-        interpretations = comp.get("interpretations", [])
-        kritiek_items = [
-            i for i in interpretations if i.get("classification") == "KRITIEK"
-        ]
-        if kritiek_items:
-            interp_items = ""
-            for interp in kritiek_items:
-                desc = interp.get("description", "")
-                crop_b64 = interp.get("crop_image", "")
-
-                badge_cls = (
-                    "background:#c0392b;color:#fff;padding:2px 8px;"
-                    "border-radius:8px;font-size:12px;font-weight:600;"
-                )
-
-                crop_html = ""
-                if crop_b64:
-                    crop_html = (
-                        f'<img src="data:image/png;base64,{crop_b64}" '
-                        f'style="height:80px;border:1px solid #ddd;border-radius:4px;'
-                        f'cursor:pointer;flex-shrink:0;" '
-                        f'onclick="window.open(this.src)" '
-                        f'alt="Crop"/>'
-                    )
-
-                interp_items += f"""
-                <div style="display:flex;align-items:flex-start;gap:12px;
-                    padding:8px 0;border-bottom:1px solid #eee;">
-                    {crop_html}
-                    <div style="flex:1;">
-                        <span style="{badge_cls}">KRITIEK</span>
-                        <span style="margin-left:8px;">{desc}</span>
-                    </div>
-                </div>"""
-
-            interp_html = f"""
-            <div style="margin-top:12px;padding:12px;background:#fff;
-                border:1px solid #ddd;border-radius:6px;">
-                <h3 style="margin:0 0 8px 0;font-size:16px;">AI Interpretatie</h3>
-                {interp_items}
-            </div>"""
+        # Interpretaties HTML met type badges
+        interp_html = _build_interpretations_html(
+            comp.get("interpretations", [])
+        )
 
         cards_html += f"""
         <div style="margin-bottom:32px;">
@@ -361,6 +442,7 @@ async def results_page() -> HTMLResponse:
         <p class="meta">
             Oud: <strong>{old_name}</strong> ({old_pages} pagina's) &rarr;
             Nieuw: <strong>{new_name}</strong> ({new_pages} pagina's)
+            &nbsp;|&nbsp; Schaal: 1:{scale}
         </p>
         {cards_html}
     </div>
