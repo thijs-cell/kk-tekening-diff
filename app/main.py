@@ -1,6 +1,7 @@
 """FastAPI applicatie voor het vergelijken van PDF bouwtekeningen."""
 
 import gc
+import io
 import logging
 import os
 from typing import Any
@@ -270,13 +271,26 @@ async def compare_pdfs(
 
 # ── Blok-gebaseerde vergelijking (zonder AI) ──────────────────────────
 
-# Opslag voor blokafbeeldingen: key = "pagina_rij_kolom" -> PNG bytes
+# Opslag voor blokafbeeldingen: key = "pagina_rij_kolom" -> JPEG bytes
 _block_store: dict[str, bytes] = {}
+
+BLOCK_JPEG_QUALITY = 85
+
+
+def _png_to_jpeg(png_bytes: bytes) -> bytes:
+    """Converteer PNG bytes naar JPEG bytes met kwaliteit 85."""
+    from PIL import Image
+    img = Image.open(io.BytesIO(png_bytes))
+    if img.mode == "RGBA":
+        img = img.convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=BLOCK_JPEG_QUALITY)
+    return buf.getvalue()
 
 
 @app.get("/strip/{page}/{row}/{col}")
 async def get_block(page: int, row: int, col: int) -> Response:
-    """Haal een blokafbeelding op (OUD boven, NIEUW onder, PNG)."""
+    """Haal een blokafbeelding op (OUD boven, NIEUW onder, JPEG)."""
     key = f"{page}_{row}_{col}"
     if key not in _block_store:
         return JSONResponse(
@@ -289,7 +303,7 @@ async def get_block(page: int, row: int, col: int) -> Response:
                 ),
             },
         )
-    return Response(content=_block_store[key], media_type="image/png")
+    return Response(content=_block_store[key], media_type="image/jpeg")
 
 
 @app.post("/compare-strips")
@@ -424,8 +438,9 @@ async def compare_strips(
                                 aligned_old_bgr, new_bgr,
                                 y_start, y_end, x_start, x_end,
                             )
+                            jpeg_bytes = _png_to_jpeg(png_bytes)
                             key = f"{i}_{row + 1}_{col + 1}"
-                            _block_store[key] = png_bytes
+                            _block_store[key] = jpeg_bytes
                             block_meta["url"] = f"/strip/{i}/{row + 1}/{col + 1}"
 
                         blocks_meta.append(block_meta)
