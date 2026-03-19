@@ -1,4 +1,4 @@
-"""AI-interpretatie via strook-gebaseerde vergelijking met Claude Vision API."""
+"""AI-interpretatie via blok-gebaseerde vergelijking met Claude Vision API."""
 
 import base64
 import io
@@ -15,9 +15,10 @@ from PIL import Image, ImageDraw, ImageFont
 from .config import (
     ANTHROPIC_API_KEY,
     ANTHROPIC_MODEL,
-    MAX_STRIP_IMAGE_BYTES,
+    GRID_COLS,
+    GRID_ROWS,
+    MAX_BLOCK_IMAGE_BYTES,
     MIN_CONTOUR_AREA,
-    NUM_STRIPS,
 )
 
 logger = logging.getLogger(__name__)
@@ -29,9 +30,9 @@ CHANGE_TYPES = (
 
 
 def _build_vision_prompt(scale: int, verschuivingen_tekst: str) -> str:
-    """Bouw de Claude Vision prompt voor een strook-vergelijking."""
+    """Bouw de Claude Vision prompt voor een blok-vergelijking."""
     return (
-        "Je analyseert twee stroken van een demarcatietekening voor gibowanden. "
+        "Je analyseert twee blokken van een demarcatietekening voor gibowanden. "
         "Boven staat de OUDE versie, onder de NIEUWE versie. "
         f"De tekening heeft schaal 1:{scale}.\n\n"
         "CONTEXT OVER DEZE TEKENINGEN:\n"
@@ -71,7 +72,7 @@ def _build_vision_prompt(scale: int, verschuivingen_tekst: str) -> str:
         '"WANDVERSCHUIVING" of "INDELING" of "SPARING" of "MATERIAALCODE",\n'
         '      "description": "beschrijving in het Nederlands, max 2 zinnen. '
         'Bij verschuiving: gebruik de OpenCV-gemeten waarde in mm.",\n'
-        '      "location": "waar op de strook, bijv. \'linkerdeel bij ruimte '
+        '      "location": "waar op het blok, bijv. \'linkerdeel bij ruimte '
         "0.B09' of 'midden bij kozijn H14'\"\n"
         "    }\n"
         "  ]\n"
@@ -80,33 +81,37 @@ def _build_vision_prompt(scale: int, verschuivingen_tekst: str) -> str:
     )
 
 
-def _strip_has_changes(diff_mask: np.ndarray, y_start: int, y_end: int) -> bool:
-    """Check of een strook wijzigingen bevat in het diff masker."""
-    strip = diff_mask[y_start:y_end, :]
-    return int(np.count_nonzero(strip)) > 0
+def _block_has_changes(
+    diff_mask: np.ndarray,
+    y_start: int, y_end: int,
+    x_start: int, x_end: int,
+) -> bool:
+    """Check of een blok wijzigingen bevat in het diff masker."""
+    block = diff_mask[y_start:y_end, x_start:x_end]
+    return int(np.count_nonzero(block)) > 0
 
 
-def _get_displacements_in_strip(
+def _get_displacements_in_block(
     displacements: list[dict[str, Any]],
-    y_start: int,
-    y_end: int,
+    y_start: int, y_end: int,
+    x_start: int, x_end: int,
 ) -> list[dict[str, Any]]:
-    """Filter verschuivingen die binnen een strook vallen."""
+    """Filter verschuivingen die binnen een blok vallen."""
     result = []
     for d in displacements:
-        cy = d["centroid"][1]
-        if y_start <= cy < y_end:
+        cx, cy = d["centroid"]
+        if y_start <= cy < y_end and x_start <= cx < x_end:
             result.append(d)
     return result
 
 
-def _format_displacements(strip_displacements: list[dict[str, Any]]) -> str:
+def _format_displacements(block_displacements: list[dict[str, Any]]) -> str:
     """Formatteer verschuivingsdata als leesbare tekst voor de prompt."""
-    if not strip_displacements:
+    if not block_displacements:
         return "Geen verschuivingen gemeten in dit gebied."
 
     lines = []
-    for i, d in enumerate(strip_displacements):
+    for i, d in enumerate(block_displacements):
         x, y = d["centroid"]
         if d["verschuiving_mm"] is not None:
             lines.append(
@@ -121,27 +126,27 @@ def _format_displacements(strip_displacements: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _create_strip_comparison(
+def _create_block_comparison(
     old_bgr: np.ndarray,
     new_bgr: np.ndarray,
-    y_start: int,
-    y_end: int,
+    y_start: int, y_end: int,
+    x_start: int, x_end: int,
 ) -> bytes:
     """
     Maak een vergelijkingsafbeelding: oud boven, nieuw onder met labels.
 
     Returns:
-        PNG bytes van de gecombineerde strook.
+        PNG bytes van het gecombineerde blok.
     """
-    old_strip = old_bgr[y_start:y_end, :]
-    new_strip = new_bgr[y_start:y_end, :]
+    old_block = old_bgr[y_start:y_end, x_start:x_end]
+    new_block = new_bgr[y_start:y_end, x_start:x_end]
 
-    strip_h, strip_w = old_strip.shape[:2]
+    block_h, block_w = old_block.shape[:2]
     label_h = 40
     separator_h = 4
 
-    total_h = label_h + strip_h + separator_h + label_h + strip_h
-    total_w = strip_w
+    total_h = label_h + block_h + separator_h + label_h + block_h
+    total_w = block_w
 
     canvas = np.ones((total_h, total_w, 3), dtype=np.uint8) * 255
 
@@ -150,11 +155,11 @@ def _create_strip_comparison(
     cv2.putText(canvas, "OUD", (10, 28), font, 0.9, (0, 0, 200), 2)
     cv2.line(canvas, (0, label_h - 2), (total_w, label_h - 2), (180, 180, 180), 1)
 
-    # Oude strook
-    canvas[label_h:label_h + strip_h, 0:strip_w] = old_strip
+    # Oud blok
+    canvas[label_h:label_h + block_h, 0:block_w] = old_block
 
     # Scheidingslijn
-    sep_y = label_h + strip_h
+    sep_y = label_h + block_h
     canvas[sep_y:sep_y + separator_h, :] = (100, 100, 100)
 
     # Label "NIEUW"
@@ -168,14 +173,14 @@ def _create_strip_comparison(
         1,
     )
 
-    # Nieuwe strook
-    new_strip_y = new_label_y + label_h
-    canvas[new_strip_y:new_strip_y + strip_h, 0:strip_w] = new_strip
+    # Nieuw blok
+    new_block_y = new_label_y + label_h
+    canvas[new_block_y:new_block_y + block_h, 0:block_w] = new_block
 
     # Encodeer als PNG
     success, buffer = cv2.imencode(".png", canvas)
     if not success:
-        raise RuntimeError("PNG encoding mislukt voor strook")
+        raise RuntimeError("PNG encoding mislukt voor blok")
     return buffer.tobytes()
 
 
@@ -217,10 +222,11 @@ def _call_claude_vision(
     image_bytes: bytes,
     prompt: str,
     page_num: int,
-    strip_idx: int,
+    row: int,
+    col: int,
 ) -> list[dict[str, str]]:
     """
-    Stuur een strook-vergelijking naar Claude Vision API en parse de response.
+    Stuur een blok-vergelijking naar Claude Vision API en parse de response.
 
     Returns:
         Lijst van {"type": ..., "description": ..., "location": ...} dicts.
@@ -260,8 +266,8 @@ def _call_claude_vision(
         elapsed = time.time() - start
         usage = response.usage
         logger.info(
-            "AI call pagina %d strook %d: %.1fs, %d in / %d out tokens",
-            page_num, strip_idx, elapsed,
+            "AI call pagina %d blok r%d/c%d: %.1fs, %d in / %d out tokens",
+            page_num, row, col, elapsed,
             usage.input_tokens, usage.output_tokens,
         )
 
@@ -293,15 +299,15 @@ def _call_claude_vision(
 
     except json.JSONDecodeError as e:
         logger.warning(
-            "AI response pagina %d strook %d: ongeldige JSON: %s",
-            page_num, strip_idx, str(e),
+            "AI response pagina %d blok r%d/c%d: ongeldige JSON: %s",
+            page_num, row, col, str(e),
         )
         return []
     except Exception as e:
         elapsed = time.time() - start
         logger.error(
-            "AI call mislukt pagina %d strook %d na %.1fs: %s",
-            page_num, strip_idx, elapsed, str(e),
+            "AI call mislukt pagina %d blok r%d/c%d na %.1fs: %s",
+            page_num, row, col, elapsed, str(e),
         )
         return []
 
@@ -316,10 +322,10 @@ def interpret_page(
     displacements: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """
-    Interpreteer wijzigingen per strook via Claude Vision.
+    Interpreteer wijzigingen per blok via Claude Vision.
 
-    Splits de pagina in NUM_STRIPS horizontale stroken. Alleen stroken
-    met wijzigingen worden naar Claude gestuurd.
+    Splits de pagina in een raster van GRID_COLS x GRID_ROWS blokken.
+    Alleen blokken met wijzigingen worden naar Claude gestuurd.
 
     Parameters:
         old_bgr: Oude afbeelding in BGR formaat (aligned).
@@ -341,71 +347,76 @@ def interpret_page(
         displacements = []
 
     h, w = diff_mask.shape[:2]
-    strip_height = h // NUM_STRIPS
+    block_h = h // GRID_ROWS
+    block_w = w // GRID_COLS
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     all_changes: list[dict[str, Any]] = []
 
-    for strip_idx in range(NUM_STRIPS):
-        y_start = strip_idx * strip_height
-        y_end = h if strip_idx == NUM_STRIPS - 1 else (strip_idx + 1) * strip_height
+    for row in range(GRID_ROWS):
+        for col in range(GRID_COLS):
+            y_start = row * block_h
+            y_end = h if row == GRID_ROWS - 1 else (row + 1) * block_h
+            x_start = col * block_w
+            x_end = w if col == GRID_COLS - 1 else (col + 1) * block_w
 
-        # Check of er wijzigingen in deze strook zitten
-        if not _strip_has_changes(diff_mask, y_start, y_end):
+            # Check of er wijzigingen in dit blok zitten
+            if not _block_has_changes(diff_mask, y_start, y_end, x_start, x_end):
+                logger.info(
+                    "Pagina %d blok r%d/c%d: geen wijzigingen, overgeslagen",
+                    page_num, row + 1, col + 1,
+                )
+                continue
+
+            # Verschuivingen in dit blok
+            block_displacements = _get_displacements_in_block(
+                displacements, y_start, y_end, x_start, x_end,
+            )
+            verschuivingen_tekst = _format_displacements(block_displacements)
+
             logger.info(
-                "Pagina %d strook %d/%d: geen wijzigingen, overgeslagen",
-                page_num, strip_idx + 1, NUM_STRIPS,
+                "Pagina %d blok r%d/c%d: wijzigingen gevonden, "
+                "%d verschuivingen, stuur naar AI",
+                page_num, row + 1, col + 1, len(block_displacements),
             )
-            continue
 
-        # Verschuivingen in deze strook
-        strip_displacements = _get_displacements_in_strip(
-            displacements, y_start, y_end
-        )
-        verschuivingen_tekst = _format_displacements(strip_displacements)
+            # Maak vergelijkingsafbeelding (oud boven, nieuw onder)
+            try:
+                png_bytes = _create_block_comparison(
+                    old_bgr, new_bgr, y_start, y_end, x_start, x_end,
+                )
+            except Exception as e:
+                logger.error(
+                    "Blok-afbeelding mislukt pagina %d blok r%d/c%d: %s",
+                    page_num, row + 1, col + 1, str(e),
+                )
+                continue
 
-        logger.info(
-            "Pagina %d strook %d/%d: wijzigingen gevonden, "
-            "%d verschuivingen, stuur naar AI",
-            page_num, strip_idx + 1, NUM_STRIPS, len(strip_displacements),
-        )
-
-        # Maak vergelijkingsafbeelding (oud boven, nieuw onder)
-        try:
-            png_bytes = _create_strip_comparison(
-                old_bgr, new_bgr, y_start, y_end
+            # Verklein als nodig
+            image_bytes = _downscale_to_fit(png_bytes, MAX_BLOCK_IMAGE_BYTES)
+            logger.info(
+                "Pagina %d blok r%d/c%d: afbeelding %d KB%s",
+                page_num, row + 1, col + 1, len(image_bytes) // 1024,
+                " (verkleind)" if len(image_bytes) < len(png_bytes) else "",
             )
-        except Exception as e:
-            logger.error(
-                "Strook-afbeelding mislukt pagina %d strook %d: %s",
-                page_num, strip_idx + 1, str(e),
+
+            # Bouw prompt en stuur naar Claude
+            prompt = _build_vision_prompt(scale, verschuivingen_tekst)
+            changes = _call_claude_vision(
+                client, image_bytes, prompt, page_num, row + 1, col + 1,
             )
-            continue
 
-        # Verklein als nodig
-        image_bytes = _downscale_to_fit(png_bytes, MAX_STRIP_IMAGE_BYTES)
-        logger.info(
-            "Pagina %d strook %d: afbeelding %d KB%s",
-            page_num, strip_idx + 1, len(image_bytes) // 1024,
-            " (verkleind)" if len(image_bytes) < len(png_bytes) else "",
-        )
-
-        # Bouw prompt en stuur naar Claude
-        prompt = _build_vision_prompt(scale, verschuivingen_tekst)
-        changes = _call_claude_vision(
-            client, image_bytes, prompt, page_num, strip_idx + 1
-        )
-
-        for change in changes:
-            all_changes.append({
-                "type": change["type"],
-                "description": change["description"],
-                "location": change["location"],
-                "strip": strip_idx + 1,
-            })
+            for change in changes:
+                all_changes.append({
+                    "type": change["type"],
+                    "description": change["description"],
+                    "location": change["location"],
+                    "row": row + 1,
+                    "col": col + 1,
+                })
 
     logger.info(
-        "Pagina %d: %d wijzigingen gevonden over alle stroken",
+        "Pagina %d: %d wijzigingen gevonden over alle blokken",
         page_num, len(all_changes),
     )
 

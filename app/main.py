@@ -14,15 +14,15 @@ from .config import (
     ANTHROPIC_API_KEY,
     DPI,
     ENABLE_AI_INTERPRETATION,
+    GRID_COLS,
+    GRID_ROWS,
     MAX_FILE_SIZE_MB,
-    NUM_STRIPS,
     SENSITIVITY,
-    STRIP_DPI,
 )
 from .interpreter import (
-    _create_strip_comparison,
-    _get_displacements_in_strip,
-    _strip_has_changes,
+    _block_has_changes,
+    _create_block_comparison,
+    _get_displacements_in_block,
 )
 from .scale_reader import SCALE_DPI, calculate_pixels_per_mm, read_scale
 
@@ -268,25 +268,28 @@ async def compare_pdfs(
     return JSONResponse(content=_last_result)
 
 
-# ── Strip-gebaseerde vergelijking (zonder AI) ─────────────────────────
+# ── Blok-gebaseerde vergelijking (zonder AI) ──────────────────────────
 
-# Opslag voor strookafbeeldingen: key = "pagina_strook" -> PNG bytes
-_strip_store: dict[str, bytes] = {}
+# Opslag voor blokafbeeldingen: key = "pagina_rij_kolom" -> PNG bytes
+_block_store: dict[str, bytes] = {}
 
 
-@app.get("/strip/{page}/{strip_number}")
-async def get_strip(page: int, strip_number: int) -> Response:
-    """Haal een strookafbeelding op (OUD boven, NIEUW onder, PNG)."""
-    key = f"{page}_{strip_number}"
-    if key not in _strip_store:
+@app.get("/strip/{page}/{row}/{col}")
+async def get_block(page: int, row: int, col: int) -> Response:
+    """Haal een blokafbeelding op (OUD boven, NIEUW onder, PNG)."""
+    key = f"{page}_{row}_{col}"
+    if key not in _block_store:
         return JSONResponse(
             status_code=404,
             content={
                 "status": "error",
-                "detail": f"Strip {strip_number} van pagina {page} niet gevonden.",
+                "detail": (
+                    f"Blok rij {row}, kolom {col} van pagina {page} "
+                    f"niet gevonden."
+                ),
             },
         )
-    return Response(content=_strip_store[key], media_type="image/png")
+    return Response(content=_block_store[key], media_type="image/png")
 
 
 @app.post("/compare-strips")
@@ -307,9 +310,10 @@ async def compare_strips(
     ),
 ) -> JSONResponse:
     """
-    Vergelijk twee PDF's en geef strookmetadata terug zonder AI-interpretatie.
+    Vergelijk twee PDF's en geef blokmetadata terug zonder AI-interpretatie.
 
-    Strookafbeeldingen zijn opvraagbaar via GET /strip/{page}/{strip_number}.
+    Elke pagina wordt opgesplitst in een raster van GRID_COLS x GRID_ROWS blokken.
+    Blokafbeeldingen zijn opvraagbaar via GET /strip/{page}/{row}/{col}.
     """
     old_bytes = await old_pdf.read()
     new_bytes = await new_pdf.read()
@@ -326,7 +330,7 @@ async def compare_strips(
         return JSONResponse(status_code=400, content={"status": "error", "detail": error})
 
     logger.info(
-        "Strip-vergelijking gestart: '%s' vs '%s', DPI=%d, sensitivity=%d",
+        "Blok-vergelijking gestart: '%s' vs '%s', DPI=%d, sensitivity=%d",
         old_filename, new_filename, dpi, sensitivity,
     )
 
@@ -348,14 +352,14 @@ async def compare_strips(
     pixels_per_mm = calculate_pixels_per_mm(dpi, scale)
     logger.info("Schaal: 1:%d, pixels_per_mm: %.4f (bij DPI %d)", scale, pixels_per_mm, dpi)
 
-    # Oude stroken wissen
-    global _strip_store
-    _strip_store = {}
+    # Oude blokken wissen
+    global _block_store
+    _block_store = {}
 
     pages_result: list[dict[str, Any]] = []
 
     for i in range(1, total_pages + 1):
-        logger.info("[pagina %d/%d] Start strip-verwerking...", i, total_pages)
+        logger.info("[pagina %d/%d] Start blok-verwerking...", i, total_pages)
         old_img = None
         new_img = None
 
@@ -374,68 +378,77 @@ async def compare_strips(
                 scale=scale, pixels_per_mm=pixels_per_mm,
             )
 
-            strips_meta: list[dict[str, Any]] = []
+            blocks_meta: list[dict[str, Any]] = []
 
             if raw["diff_mask"] is not None and raw["aligned_old_bgr"] is not None:
                 diff_mask = raw["diff_mask"]
                 aligned_old_bgr = raw["aligned_old_bgr"]
                 new_bgr = raw["new_bgr"]
                 displacements = raw["displacements"]
-                h = diff_mask.shape[0]
-                strip_height = h // NUM_STRIPS
+                h, w = diff_mask.shape[:2]
+                block_h = h // GRID_ROWS
+                block_w = w // GRID_COLS
 
-                for s in range(NUM_STRIPS):
-                    strip_num = s + 1
-                    y_start = s * strip_height
-                    y_end = h if s == NUM_STRIPS - 1 else (s + 1) * strip_height
+                for row in range(GRID_ROWS):
+                    for col in range(GRID_COLS):
+                        y_start = row * block_h
+                        y_end = h if row == GRID_ROWS - 1 else (row + 1) * block_h
+                        x_start = col * block_w
+                        x_end = w if col == GRID_COLS - 1 else (col + 1) * block_w
 
-                    has_changes = _strip_has_changes(diff_mask, y_start, y_end)
-                    strip_disps = _get_displacements_in_strip(
-                        displacements, y_start, y_end
-                    )
-
-                    strip_meta: dict[str, Any] = {
-                        "strip_number": strip_num,
-                        "has_changes": has_changes,
-                        "url": None,
-                        "displacements": [
-                            {
-                                "x": d["x"],
-                                "y": d["y"],
-                                "verschuiving_mm": d["verschuiving_mm"],
-                                "verschuiving_px": d["verschuiving_px"],
-                            }
-                            for d in strip_disps
-                        ],
-                    }
-
-                    if has_changes:
-                        png_bytes = _create_strip_comparison(
-                            aligned_old_bgr, new_bgr, y_start, y_end
+                        has_changes = _block_has_changes(
+                            diff_mask, y_start, y_end, x_start, x_end,
                         )
-                        key = f"{i}_{strip_num}"
-                        _strip_store[key] = png_bytes
-                        strip_meta["url"] = f"/strip/{i}/{strip_num}"
+                        block_disps = _get_displacements_in_block(
+                            displacements, y_start, y_end, x_start, x_end,
+                        )
 
-                    strips_meta.append(strip_meta)
+                        block_meta: dict[str, Any] = {
+                            "row": row + 1,
+                            "col": col + 1,
+                            "has_changes": has_changes,
+                            "url": None,
+                            "displacements": [
+                                {
+                                    "x": d["x"],
+                                    "y": d["y"],
+                                    "verschuiving_mm": d["verschuiving_mm"],
+                                    "verschuiving_px": d["verschuiving_px"],
+                                }
+                                for d in block_disps
+                            ],
+                        }
+
+                        if has_changes:
+                            png_bytes = _create_block_comparison(
+                                aligned_old_bgr, new_bgr,
+                                y_start, y_end, x_start, x_end,
+                            )
+                            key = f"{i}_{row + 1}_{col + 1}"
+                            _block_store[key] = png_bytes
+                            block_meta["url"] = f"/strip/{i}/{row + 1}/{col + 1}"
+
+                        blocks_meta.append(block_meta)
 
                 # Ruwe data vrijgeven
                 del diff_mask, aligned_old_bgr, new_bgr
             else:
-                for s in range(NUM_STRIPS):
-                    strips_meta.append({
-                        "strip_number": s + 1,
-                        "has_changes": False,
-                        "url": None,
-                        "displacements": [],
-                    })
+                for row in range(GRID_ROWS):
+                    for col in range(GRID_COLS):
+                        blocks_meta.append({
+                            "row": row + 1,
+                            "col": col + 1,
+                            "has_changes": False,
+                            "url": None,
+                            "displacements": [],
+                        })
 
             pages_result.append({
                 "page": raw["page"],
                 "status": raw["status"],
                 "changes_detected": raw["changes_detected"],
                 "change_percentage": raw["change_percentage"],
-                "strips": strips_meta,
+                "blocks": blocks_meta,
             })
 
         except Exception as e:
@@ -445,7 +458,7 @@ async def compare_strips(
                 "status": "error",
                 "changes_detected": False,
                 "change_percentage": 0.0,
-                "strips": [],
+                "blocks": [],
                 "error": str(e),
             })
 
@@ -462,8 +475,8 @@ async def compare_strips(
     gc.collect()
 
     logger.info(
-        "Strip-vergelijking voltooid: %d pagina's, %d stroken opgeslagen",
-        total_pages, len(_strip_store),
+        "Blok-vergelijking voltooid: %d pagina's, %d blokken opgeslagen",
+        total_pages, len(_block_store),
     )
 
     return JSONResponse(content={
@@ -473,6 +486,7 @@ async def compare_strips(
         "new_pages": new_count,
         "old_filename": old_filename,
         "new_filename": new_filename,
+        "grid": {"rows": GRID_ROWS, "cols": GRID_COLS},
         "pages": pages_result,
     })
 
