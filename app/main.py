@@ -17,6 +17,7 @@ from .config import (
     ENABLE_AI_INTERPRETATION,
     GRID_COLS,
     GRID_ROWS,
+    MAX_BLOCK_IMAGE_BYTES,
     MAX_FILE_SIZE_MB,
     SENSITIVITY,
 )
@@ -274,17 +275,20 @@ async def compare_pdfs(
 # Opslag voor blokafbeeldingen: key = "pagina_rij_kolom" -> JPEG bytes
 _block_store: dict[str, bytes] = {}
 
-BLOCK_JPEG_QUALITY = 85
+BLOCK_JPEG_QUALITY = 80
 
 
 def _png_to_jpeg(png_bytes: bytes) -> bytes:
-    """Converteer PNG bytes naar JPEG bytes met kwaliteit 85."""
+    """Converteer PNG bytes naar JPEG bytes met kwaliteit 80 (fallback 70 bij >4.5MB)."""
     from PIL import Image
     img = Image.open(io.BytesIO(png_bytes))
     if img.mode == "RGBA":
         img = img.convert("RGB")
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=BLOCK_JPEG_QUALITY)
+    if buf.tell() > MAX_BLOCK_IMAGE_BYTES:
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=70)
     return buf.getvalue()
 
 
@@ -310,7 +314,7 @@ async def get_block(page: int, row: int, col: int) -> Response:
 async def compare_strips(
     old_pdf: UploadFile = File(..., description="Oude versie van de PDF tekening"),
     new_pdf: UploadFile = File(..., description="Nieuwe versie van de PDF tekening"),
-    dpi: int = Query(default=300, ge=72, le=600, description="Render DPI"),
+    dpi: int = Query(default=500, ge=72, le=600, description="Render DPI"),
     sensitivity: int = Query(
         default=SENSITIVITY,
         ge=1,
