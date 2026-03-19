@@ -6,17 +6,23 @@ import os
 from typing import Any
 
 from fastapi import FastAPI, File, Query, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pdf2image import convert_from_bytes, pdfinfo_from_bytes
 
-from .compare import compare_page
+from .compare import compare_page, compare_page_raw
 from .config import (
     ANTHROPIC_API_KEY,
     DPI,
     ENABLE_AI_INTERPRETATION,
     MAX_FILE_SIZE_MB,
+    NUM_STRIPS,
     SENSITIVITY,
     STRIP_DPI,
+)
+from .interpreter import (
+    _create_strip_comparison,
+    _get_displacements_in_strip,
+    _strip_has_changes,
 )
 from .scale_reader import SCALE_DPI, calculate_pixels_per_mm, read_scale
 
@@ -260,6 +266,215 @@ async def compare_pdfs(
         })
 
     return JSONResponse(content=_last_result)
+
+
+# ── Strip-gebaseerde vergelijking (zonder AI) ─────────────────────────
+
+# Opslag voor strookafbeeldingen: key = "pagina_strook" -> PNG bytes
+_strip_store: dict[str, bytes] = {}
+
+
+@app.get("/strip/{page}/{strip_number}")
+async def get_strip(page: int, strip_number: int) -> Response:
+    """Haal een strookafbeelding op (OUD boven, NIEUW onder, PNG)."""
+    key = f"{page}_{strip_number}"
+    if key not in _strip_store:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "status": "error",
+                "detail": f"Strip {strip_number} van pagina {page} niet gevonden.",
+            },
+        )
+    return Response(content=_strip_store[key], media_type="image/png")
+
+
+@app.post("/compare-strips")
+async def compare_strips(
+    old_pdf: UploadFile = File(..., description="Oude versie van de PDF tekening"),
+    new_pdf: UploadFile = File(..., description="Nieuwe versie van de PDF tekening"),
+    dpi: int = Query(default=300, ge=72, le=600, description="Render DPI"),
+    sensitivity: int = Query(
+        default=SENSITIVITY,
+        ge=1,
+        le=255,
+        description="Verschildrempel (lager = gevoeliger)",
+    ),
+    max_pages: int | None = Query(
+        default=None,
+        ge=1,
+        description="Maximaal aantal pagina's om te verwerken (optioneel)",
+    ),
+) -> JSONResponse:
+    """
+    Vergelijk twee PDF's en geef strookmetadata terug zonder AI-interpretatie.
+
+    Strookafbeeldingen zijn opvraagbaar via GET /strip/{page}/{strip_number}.
+    """
+    old_bytes = await old_pdf.read()
+    new_bytes = await new_pdf.read()
+
+    old_filename = old_pdf.filename or "old_pdf"
+    new_filename = new_pdf.filename or "new_pdf"
+
+    error = _validate_pdf(old_bytes, old_filename)
+    if error:
+        return JSONResponse(status_code=400, content={"status": "error", "detail": error})
+
+    error = _validate_pdf(new_bytes, new_filename)
+    if error:
+        return JSONResponse(status_code=400, content={"status": "error", "detail": error})
+
+    logger.info(
+        "Strip-vergelijking gestart: '%s' vs '%s', DPI=%d, sensitivity=%d",
+        old_filename, new_filename, dpi, sensitivity,
+    )
+
+    try:
+        old_count = _get_page_count(old_bytes)
+        new_count = _get_page_count(new_bytes)
+    except Exception as e:
+        logger.error("Fout bij het lezen van PDF info: %s", str(e))
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "detail": f"Kan PDF info niet lezen: {str(e)}"},
+        )
+
+    total_pages = max(old_count, new_count)
+    if max_pages is not None:
+        total_pages = min(total_pages, max_pages)
+
+    scale = _read_scale_from_pdf(new_bytes)
+    pixels_per_mm = calculate_pixels_per_mm(dpi, scale)
+    logger.info("Schaal: 1:%d, pixels_per_mm: %.4f (bij DPI %d)", scale, pixels_per_mm, dpi)
+
+    # Oude stroken wissen
+    global _strip_store
+    _strip_store = {}
+
+    pages_result: list[dict[str, Any]] = []
+
+    for i in range(1, total_pages + 1):
+        logger.info("[pagina %d/%d] Start strip-verwerking...", i, total_pages)
+        old_img = None
+        new_img = None
+
+        try:
+            if i <= old_count:
+                old_img = convert_from_bytes(
+                    old_bytes, dpi=dpi, first_page=i, last_page=i
+                )[0]
+            if i <= new_count:
+                new_img = convert_from_bytes(
+                    new_bytes, dpi=dpi, first_page=i, last_page=i
+                )[0]
+
+            raw = compare_page_raw(
+                old_img, new_img, i, sensitivity,
+                scale=scale, pixels_per_mm=pixels_per_mm,
+            )
+
+            strips_meta: list[dict[str, Any]] = []
+
+            if raw["diff_mask"] is not None and raw["aligned_old_bgr"] is not None:
+                diff_mask = raw["diff_mask"]
+                aligned_old_bgr = raw["aligned_old_bgr"]
+                new_bgr = raw["new_bgr"]
+                displacements = raw["displacements"]
+                h = diff_mask.shape[0]
+                strip_height = h // NUM_STRIPS
+
+                for s in range(NUM_STRIPS):
+                    strip_num = s + 1
+                    y_start = s * strip_height
+                    y_end = h if s == NUM_STRIPS - 1 else (s + 1) * strip_height
+
+                    has_changes = _strip_has_changes(diff_mask, y_start, y_end)
+                    strip_disps = _get_displacements_in_strip(
+                        displacements, y_start, y_end
+                    )
+
+                    strip_meta: dict[str, Any] = {
+                        "strip_number": strip_num,
+                        "has_changes": has_changes,
+                        "url": None,
+                        "displacements": [
+                            {
+                                "x": d["x"],
+                                "y": d["y"],
+                                "verschuiving_mm": d["verschuiving_mm"],
+                                "verschuiving_px": d["verschuiving_px"],
+                            }
+                            for d in strip_disps
+                        ],
+                    }
+
+                    if has_changes:
+                        png_bytes = _create_strip_comparison(
+                            aligned_old_bgr, new_bgr, y_start, y_end
+                        )
+                        key = f"{i}_{strip_num}"
+                        _strip_store[key] = png_bytes
+                        strip_meta["url"] = f"/strip/{i}/{strip_num}"
+
+                    strips_meta.append(strip_meta)
+
+                # Ruwe data vrijgeven
+                del diff_mask, aligned_old_bgr, new_bgr
+            else:
+                for s in range(NUM_STRIPS):
+                    strips_meta.append({
+                        "strip_number": s + 1,
+                        "has_changes": False,
+                        "url": None,
+                        "displacements": [],
+                    })
+
+            pages_result.append({
+                "page": raw["page"],
+                "status": raw["status"],
+                "changes_detected": raw["changes_detected"],
+                "change_percentage": raw["change_percentage"],
+                "strips": strips_meta,
+            })
+
+        except Exception as e:
+            logger.error("[pagina %d] FOUT in compare-strips: %s", i, str(e))
+            pages_result.append({
+                "page": i,
+                "status": "error",
+                "changes_detected": False,
+                "change_percentage": 0.0,
+                "strips": [],
+                "error": str(e),
+            })
+
+        finally:
+            if old_img is not None:
+                old_img.close()
+                del old_img
+            if new_img is not None:
+                new_img.close()
+                del new_img
+            gc.collect()
+
+    del old_bytes, new_bytes
+    gc.collect()
+
+    logger.info(
+        "Strip-vergelijking voltooid: %d pagina's, %d stroken opgeslagen",
+        total_pages, len(_strip_store),
+    )
+
+    return JSONResponse(content={
+        "status": "success",
+        "scale": scale,
+        "old_pages": old_count,
+        "new_pages": new_count,
+        "old_filename": old_filename,
+        "new_filename": new_filename,
+        "pages": pages_result,
+    })
 
 
 # Badge kleuren per wijzigingstype

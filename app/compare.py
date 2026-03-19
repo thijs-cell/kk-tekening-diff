@@ -185,6 +185,113 @@ def _compute_displacements(
     return displacements
 
 
+def compare_page_raw(
+    old_img: Optional[Image.Image],
+    new_img: Optional[Image.Image],
+    page_num: int,
+    sensitivity: int,
+    scale: int = 50,
+    pixels_per_mm: float = 0.157,
+) -> dict[str, Any]:
+    """
+    Vergelijk pagina's en geef metadata + ruwe data terug voor strookgeneratie.
+
+    Geen AI-interpretatie. Retourneert aligned BGR afbeeldingen, diff masker
+    en verschuivingen zodat de caller stroken kan genereren.
+    """
+    result: dict[str, Any] = {
+        "page": page_num,
+        "status": "compared",
+        "changes_detected": False,
+        "change_percentage": 0.0,
+        "aligned_old_bgr": None,
+        "new_bgr": None,
+        "diff_mask": None,
+        "displacements": [],
+    }
+
+    if old_img is None and new_img is not None:
+        result["status"] = "new_page"
+        result["changes_detected"] = True
+        result["change_percentage"] = 100.0
+        return result
+
+    if new_img is None and old_img is not None:
+        result["status"] = "removed_page"
+        result["changes_detected"] = True
+        result["change_percentage"] = 100.0
+        return result
+
+    if old_img is None or new_img is None:
+        result["status"] = "alignment_failed"
+        return result
+
+    old_gray = _pil_to_cv2_gray(old_img)
+    new_gray = _pil_to_cv2_gray(new_img)
+    new_bgr = _pil_to_cv2_bgr(new_img)
+
+    h, w = new_gray.shape[:2]
+
+    aligned_old, success = align_images(old_gray, new_gray)
+    if not success:
+        logger.warning("Pagina %d: uitlijning mislukt", page_num)
+        result["status"] = "alignment_failed"
+        return result
+
+    diff_raw = cv2.absdiff(aligned_old, new_gray)
+    _, diff_thresh = cv2.threshold(diff_raw, sensitivity, 255, cv2.THRESH_BINARY)
+
+    kernel = cv2.getStructuringElement(
+        cv2.MORPH_RECT, (MORPH_KERNEL_SIZE, MORPH_KERNEL_SIZE)
+    )
+    diff_clean = cv2.morphologyEx(
+        diff_thresh, cv2.MORPH_OPEN, kernel, iterations=MORPH_ITERATIONS
+    )
+    diff_clean = cv2.morphologyEx(
+        diff_clean, cv2.MORPH_CLOSE, kernel, iterations=MORPH_ITERATIONS
+    )
+
+    title_mask = _create_title_block_mask(h, w)
+    diff_masked = cv2.bitwise_and(diff_clean, title_mask)
+
+    visible_pixels = int(np.count_nonzero(title_mask))
+    changed_pixels = int(np.count_nonzero(diff_masked))
+
+    change_pct = (
+        round((changed_pixels / visible_pixels) * 100, 2)
+        if visible_pixels > 0
+        else 0.0
+    )
+    result["change_percentage"] = change_pct
+
+    if changed_pixels == 0 or change_pct < 0.05:
+        result["status"] = "no_changes"
+        return result
+
+    result["changes_detected"] = True
+
+    # Aligned old BGR voor strookvergelijking
+    old_bgr_raw = _pil_to_cv2_bgr(old_img)
+    H = compute_homography(_pil_to_cv2_gray(old_img), new_gray)
+    if H is not None:
+        aligned_old_bgr = cv2.warpPerspective(old_bgr_raw, H, (w, h))
+    else:
+        aligned_old_bgr = old_bgr_raw
+
+    displacements = _compute_displacements(diff_masked, diff_masked, pixels_per_mm)
+    logger.info(
+        "Pagina %d: %d verschuivingen berekend (schaal 1:%d, %.4f px/mm)",
+        page_num, len(displacements), scale, pixels_per_mm,
+    )
+
+    result["aligned_old_bgr"] = aligned_old_bgr
+    result["new_bgr"] = new_bgr
+    result["diff_mask"] = diff_masked
+    result["displacements"] = displacements
+
+    return result
+
+
 def compare_page(
     old_img: Optional[Image.Image],
     new_img: Optional[Image.Image],
