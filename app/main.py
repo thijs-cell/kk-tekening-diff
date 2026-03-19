@@ -26,6 +26,7 @@ from .interpreter import (
     _create_block_comparison,
     _get_displacements_in_block,
 )
+from .data_compare import compare_pdfs_data
 from .scale_reader import SCALE_DPI, calculate_pixels_per_mm, read_scale
 
 # Logging configureren
@@ -507,6 +508,69 @@ async def compare_strips(
         "new_filename": new_filename,
         "grid": {"rows": GRID_ROWS, "cols": GRID_COLS},
         "pages": pages_result,
+    })
+
+
+# ── Tekst-gebaseerde vergelijking (pdfplumber, geen AI) ───────────────
+
+@app.post("/compare-data")
+async def compare_data(
+    old_pdf: UploadFile = File(..., description="Oude versie van de PDF tekening"),
+    new_pdf: UploadFile = File(..., description="Nieuwe versie van de PDF tekening"),
+    max_pages: int = Query(
+        default=1,
+        ge=1,
+        description="Aantal pagina's om te vergelijken",
+    ),
+) -> JSONResponse:
+    """
+    Vergelijk twee PDF's op tekstniveau met pdfplumber.
+
+    Extraheert maten, ruimtenamen, wandcodes, deurmaten, oppervlaktes etc.
+    en rapporteert gewijzigde, toegevoegde en verdwenen tekstelementen.
+    Geen AI calls, geen afbeeldingen.
+    """
+    old_bytes = await old_pdf.read()
+    new_bytes = await new_pdf.read()
+
+    old_filename = old_pdf.filename or "old_pdf"
+    new_filename = new_pdf.filename or "new_pdf"
+
+    error = _validate_pdf(old_bytes, old_filename)
+    if error:
+        return JSONResponse(status_code=400, content={"status": "error", "detail": error})
+
+    error = _validate_pdf(new_bytes, new_filename)
+    if error:
+        return JSONResponse(status_code=400, content={"status": "error", "detail": error})
+
+    logger.info(
+        "Data-vergelijking gestart: '%s' vs '%s', max_pages=%d",
+        old_filename, new_filename, max_pages,
+    )
+
+    try:
+        result = compare_pdfs_data(old_bytes, new_bytes, max_pages)
+    except Exception as e:
+        logger.error("Fout bij data-vergelijking: %s", str(e))
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "detail": f"Vergelijkingsfout: {str(e)}"},
+        )
+
+    del old_bytes, new_bytes
+
+    logger.info(
+        "Data-vergelijking voltooid: %d wijzigingen gevonden",
+        result["samenvatting"]["totaal"],
+    )
+
+    return JSONResponse(content={
+        "status": "success",
+        "oud": old_filename,
+        "nieuw": new_filename,
+        "paginas": max_pages,
+        **result,
     })
 
 
