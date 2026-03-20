@@ -2,6 +2,12 @@
 
 Extracts words from each page, categorizes them, and reports differences
 between old and new versions. No AI calls, no image rendering.
+
+Reports only 4 change types:
+- ruimtenaam: room name changed
+- maatvoering: dimension (mm) changed at interior wall
+- wanddikte: wall thickness changed
+- indeling: walls or rooms added/removed
 """
 
 import io
@@ -112,10 +118,12 @@ _WAND_KEYWORDS = [
     "sandwichpaneel", "voorzetwand", "biobased",
 ]
 
+_WAND_PROXIMITY_KEYWORDS = ["gibo", "kalkzandsteen", "grw"]
+
+_WANDDIKTE_VALUES = {50, 70, 100, 120}
+
 RELEVANT_CATEGORIES = {
-    "ruimtenaam", "ruimtenummer", "oppervlakte", "getal",
-    "maat_mm", "deurmaat", "merkcode", "wandcode",
-    "geluideis", "brandeis", "peilmaat",
+    "ruimtenaam", "getal", "wandcode",
 }
 
 RENVOOI_X_MIN = 2100.0
@@ -194,10 +202,11 @@ def _find_nearest(
 def _find_location_context(
     word: dict, all_words: list[dict], max_dist: float = 200.0,
 ) -> str:
+    """Find nearest room name for location context."""
     best_label = ""
     best_d = max_dist + 1
     for w in all_words:
-        if w["category"] not in ("ruimtenaam", "ruimtenummer"):
+        if w["category"] != "ruimtenaam":
             continue
         if w.get("is_renvooi"):
             continue
@@ -206,6 +215,69 @@ def _find_location_context(
             best_d = d
             best_label = w["text"].strip()
     return best_label
+
+
+def _has_nearby_wandcode(word: dict, all_words: list[dict], max_dist: float = 50.0) -> bool:
+    """Check if a getal word has a wall code keyword nearby."""
+    for w in all_words:
+        if w is word:
+            continue
+        t_lower = w["text"].strip().lower()
+        for kw in _WAND_PROXIMITY_KEYWORDS:
+            if kw in t_lower:
+                if _distance(word, w) <= max_dist:
+                    return True
+    return False
+
+
+def _is_valid_getal(text: str) -> bool:
+    """Check if a getal is valid for maatvoering (3-5 digits, no glued numbers)."""
+    t = text.strip()
+    if not re.match(r"^\d+$", t):
+        return False
+    if len(t) <= 2:
+        return False
+    if len(t) > 5:
+        return False
+    return True
+
+
+# --- Shift detection ---
+
+def _remove_shift_pairs(changes: list[dict]) -> list[dict]:
+    """Remove toegevoegd+verdwenen pairs at nearly the same position (within 25pt).
+
+    These are positional shifts, not real changes.
+    """
+    added = [c for c in changes if c["type"] == "toegevoegd"]
+    removed = [c for c in changes if c["type"] == "verdwenen"]
+    other = [c for c in changes if c["type"] not in ("toegevoegd", "verdwenen")]
+
+    skip_added: set[int] = set()
+    skip_removed: set[int] = set()
+
+    for ai, a in enumerate(added):
+        if ai in skip_added:
+            continue
+        for ri, r in enumerate(removed):
+            if ri in skip_removed:
+                continue
+            if a.get("tekst") != r.get("tekst"):
+                continue
+            if a.get("categorie") != r.get("categorie"):
+                continue
+            dx = a["x"] - r["x"]
+            dy = a["y"] - r["y"]
+            dist = math.sqrt(dx * dx + dy * dy)
+            if dist <= 25.0:
+                skip_added.add(ai)
+                skip_removed.add(ri)
+                break
+
+    result = list(other)
+    result.extend(a for ai, a in enumerate(added) if ai not in skip_added)
+    result.extend(r for ri, r in enumerate(removed) if ri not in skip_removed)
+    return result
 
 
 # --- Page comparison ---
@@ -255,6 +327,10 @@ def _compare_pages(
                 "x": round(nw["x0"], 1),
                 "y": round(nw["y0"], 1),
                 "locatie": ctx,
+                "_word_new": nw,
+                "_word_old": nearest,
+                "_all_new": new_words,
+                "_all_old": old_words,
             })
 
     # Pass 2: new words without match = toegevoegd
@@ -272,6 +348,8 @@ def _compare_pages(
             "x": round(nw["x0"], 1),
             "y": round(nw["y0"], 1),
             "locatie": ctx,
+            "_word": nw,
+            "_all_words": new_words,
         })
 
     # Pass 3: old words without match = verdwenen
@@ -289,9 +367,90 @@ def _compare_pages(
             "x": round(ow["x0"], 1),
             "y": round(ow["y0"], 1),
             "locatie": ctx,
+            "_word": ow,
+            "_all_words": old_words,
         })
 
     return changes
+
+
+# --- Post-processing: map raw changes to 4 output categories ---
+
+def _classify_changes(raw_changes: list[dict]) -> list[dict]:
+    """Map raw changes to the 4 output categories and filter noise."""
+    result: list[dict] = []
+
+    for ch in raw_changes:
+        cat = ch["categorie"]
+        typ = ch["type"]
+
+        # 1. RUIMTENAAM — only gewijzigd room names
+        if cat == "ruimtenaam" and typ == "gewijzigd":
+            result.append(_clean(ch, "ruimtenaam"))
+            continue
+
+        # 2/3. GETAL gewijzigd — could be maatvoering or wanddikte
+        if cat == "getal" and typ == "gewijzigd":
+            old_val = ch["oud"]
+            new_val = ch["nieuw"]
+
+            if not _is_valid_getal(old_val) or not _is_valid_getal(new_val):
+                continue
+
+            old_num = int(old_val)
+            new_num = int(new_val)
+
+            # Check if this is a wall thickness change
+            word_new = ch.get("_word_new")
+            all_new = ch.get("_all_new", [])
+            is_wand = (
+                (old_num in _WANDDIKTE_VALUES or new_num in _WANDDIKTE_VALUES)
+                and word_new is not None
+                and _has_nearby_wandcode(word_new, all_new)
+            )
+
+            if is_wand:
+                out = _clean(ch, "wanddikte")
+                out["verschil"] = _format_diff(old_num, new_num)
+                result.append(out)
+            else:
+                out = _clean(ch, "maatvoering")
+                out["verschil"] = _format_diff(old_num, new_num)
+                result.append(out)
+            continue
+
+        # 3. WANDCODE gewijzigd — wall type change = wanddikte
+        if cat == "wandcode" and typ == "gewijzigd":
+            result.append(_clean(ch, "wanddikte"))
+            continue
+
+        # 4. INDELING — wandcode or ruimtenaam toegevoegd/verdwenen
+        if cat == "wandcode" and typ in ("toegevoegd", "verdwenen"):
+            result.append(_clean(ch, "indeling"))
+            continue
+
+        if cat == "ruimtenaam" and typ in ("toegevoegd", "verdwenen"):
+            result.append(_clean(ch, "indeling"))
+            continue
+
+        # Everything else is filtered out:
+        # - getal toegevoegd/verdwenen (too noisy, unless near wandcode — handled below)
+        # - oppervlakte, deurmaat, merkcode, brandeis, geluideis, peilmaat, ruimtenummer
+
+    return result
+
+
+def _clean(ch: dict, new_cat: str) -> dict:
+    """Return a clean output dict without internal fields."""
+    out = {k: v for k, v in ch.items() if not k.startswith("_")}
+    out["categorie"] = new_cat
+    return out
+
+
+def _format_diff(old_val: int, new_val: int) -> str:
+    diff = new_val - old_val
+    sign = "+" if diff > 0 else ""
+    return f"{sign}{diff}mm"
 
 
 # --- Public API ---
@@ -303,7 +462,8 @@ def compare_pdfs_data(
 ) -> dict:
     """Compare two PDFs by extracting and diffing text data.
 
-    Returns the same JSON structure as compare_results.json.
+    Returns JSON with only 4 change categories:
+    ruimtenaam, maatvoering, wanddikte, indeling.
     """
     all_changes: list[dict] = []
 
@@ -319,9 +479,19 @@ def compare_pdfs_data(
             changes = _compare_pages(old_words, new_words, page_num)
             all_changes.extend(changes)
 
+    # Remove shift pairs before classification
+    all_changes = _remove_shift_pairs(all_changes)
+
+    # Classify into 4 output categories
+    all_changes = _classify_changes(all_changes)
+
     by_type: dict[str, list] = defaultdict(list)
     for ch in all_changes:
         by_type[ch["type"]].append(ch)
+
+    by_cat: dict[str, list] = defaultdict(list)
+    for ch in all_changes:
+        by_cat[ch["categorie"]].append(ch)
 
     return {
         "samenvatting": {
@@ -329,6 +499,12 @@ def compare_pdfs_data(
             "toegevoegd": len(by_type.get("toegevoegd", [])),
             "verdwenen": len(by_type.get("verdwenen", [])),
             "totaal": len(all_changes),
+            "per_categorie": {
+                "ruimtenaam": len(by_cat.get("ruimtenaam", [])),
+                "maatvoering": len(by_cat.get("maatvoering", [])),
+                "wanddikte": len(by_cat.get("wanddikte", [])),
+                "indeling": len(by_cat.get("indeling", [])),
+            },
         },
         "wijzigingen": all_changes,
     }
