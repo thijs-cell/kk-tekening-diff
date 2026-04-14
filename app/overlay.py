@@ -89,7 +89,9 @@ _RE_RUIMTE = re.compile(
     r"balkon|terras|tuin|garage|wasruimte|cv[- ]?ruimte|hydrofoor|"
     r"buitenberging|stookruimte|trappenhuis|werkruimte|lift|woonkamer|"
     r"kinderkamer|studeerkamer|kantoor|opslagruimte|fietsenstalling|"
-    r"gemeenschappelijke ruimte|recreatieruimte|speelkamer)",
+    r"gemeenschappelijke ruimte|recreatieruimte|speelkamer|"
+    r"atelier|werkplaats|studio|noodtrappenhuis|techniek|doucheruimte|"
+    r"kleedkamer|vergaderruimte|serverruimte|schoonmaakruimte)",
     re.IGNORECASE,
 )
 
