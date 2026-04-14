@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>K&amp;K Afbouw — Tekeningvergelijking</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: #1a1a1a;
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      background: #111;
+      border-bottom: 3px solid #C9A227;
+      padding: 20px 40px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .logo-icon {
+      width: 48px;
+      height: 48px;
+    }
+
+    .logo-text {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .logo-text .top {
+      font-size: 11px;
+      letter-spacing: 3px;
+      color: #C9A227;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+
+    .logo-text .bottom {
+      font-size: 22px;
+      font-weight: 800;
+      color: #fff;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 60px 20px;
+    }
+
+    .card {
+      background: #242424;
+      border: 1px solid #333;
+      border-top: 4px solid #C9A227;
+      border-radius: 4px;
+      padding: 48px;
+      width: 100%;
+      max-width: 560px;
+    }
+
+    .card h2 {
+      font-size: 20px;
+      font-weight: 700;
+      color: #C9A227;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+
+    .card p.sub {
+      color: #999;
+      font-size: 14px;
+      margin-bottom: 36px;
+    }
+
+    .field {
+      margin-bottom: 24px;
+    }
+
+    .field label {
+      display: block;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #C9A227;
+      margin-bottom: 8px;
+    }
+
+    .upload-box {
+      border: 2px dashed #444;
+      border-radius: 4px;
+      padding: 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      position: relative;
+    }
+
+    .upload-box:hover {
+      border-color: #C9A227;
+      background: #2a2a2a;
+    }
+
+    .upload-box.has-file {
+      border-color: #C9A227;
+      border-style: solid;
+    }
+
+    .upload-box input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+      width: 100%;
+      height: 100%;
+    }
+
+    .upload-box .icon {
+      font-size: 28px;
+      margin-bottom: 8px;
+      display: block;
+    }
+
+    .upload-box .label {
+      font-size: 13px;
+      color: #aaa;
+    }
+
+    .upload-box .filename {
+      font-size: 13px;
+      color: #C9A227;
+      font-weight: 600;
+      margin-top: 4px;
+    }
+
+    .field input[type="number"] {
+      width: 100%;
+      background: #1a1a1a;
+      border: 1px solid #444;
+      border-radius: 4px;
+      color: #fff;
+      padding: 12px 16px;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .field input[type="number"]:focus {
+      border-color: #C9A227;
+    }
+
+    .field .hint {
+      font-size: 11px;
+      color: #666;
+      margin-top: 6px;
+    }
+
+    button[type="submit"] {
+      width: 100%;
+      background: #C9A227;
+      color: #111;
+      border: none;
+      border-radius: 4px;
+      padding: 16px;
+      font-size: 15px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+      margin-top: 8px;
+    }
+
+    button[type="submit"]:hover:not(:disabled) {
+      background: #e0b42d;
+    }
+
+    button[type="submit"]:active:not(:disabled) {
+      transform: scale(0.99);
+    }
+
+    button[type="submit"]:disabled {
+      background: #555;
+      color: #888;
+      cursor: not-allowed;
+    }
+
+    #loading {
+      display: none;
+      margin-top: 32px;
+      text-align: center;
+      color: #C9A227;
+    }
+
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid #333;
+      border-top-color: #C9A227;
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+      margin: 0 auto 16px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    #loading p {
+      font-size: 14px;
+      color: #aaa;
+    }
+
+    #result {
+      display: none;
+      margin-top: 32px;
+    }
+
+    .result-title {
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #C9A227;
+      margin-bottom: 16px;
+      text-align: center;
+    }
+
+    .downloads {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .dl-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      padding: 20px 16px;
+      border-radius: 4px;
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      transition: opacity 0.2s;
+      text-align: center;
+    }
+
+    .dl-btn:hover { opacity: 0.85; }
+
+    .dl-btn.rapport {
+      background: #2a2a2a;
+      border: 1px solid #C9A227;
+      color: #C9A227;
+    }
+
+    .dl-btn.tekeningen {
+      background: #C9A227;
+      color: #111;
+    }
+
+    .dl-btn .dl-icon { font-size: 24px; }
+    .dl-btn .dl-sub { font-size: 11px; font-weight: 400; opacity: 0.8; }
+
+    #error {
+      display: none;
+      margin-top: 24px;
+      background: #2a1a1a;
+      border: 1px solid #8b2020;
+      border-radius: 4px;
+      padding: 16px;
+      color: #e07070;
+      font-size: 13px;
+      text-align: center;
+    }
+
+    footer {
+      text-align: center;
+      padding: 20px;
+      font-size: 11px;
+      color: #444;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <svg class="logo-icon" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect width="48" height="48" fill="#C9A227" rx="2"/>
+    <rect x="10" y="28" width="28" height="4" fill="#111"/>
+    <rect x="14" y="18" width="20" height="4" fill="#111"/>
+    <rect x="18" y="10" width="12" height="4" fill="#111"/>
+    <rect x="10" y="34" width="28" height="4" fill="#111"/>
+  </svg>
+  <div class="logo-text">
+    <span class="top">Karregat &amp; Koning</span>
+    <span class="bottom">Afbouw</span>
+  </div>
+</header>
+
+<main>
+  <div class="card">
+    <h2>Tekeningvergelijking</h2>
+    <p class="sub">Upload de oude en nieuwe tekening. Je ontvangt automatisch een rapport en de gemarkeerde tekeningen.</p>
+
+    <form id="uploadForm">
+
+      <div class="field">
+        <label>Oude tekening</label>
+        <div class="upload-box" id="boxOud">
+          <input type="file" accept=".pdf" id="oudPdf" required />
+          <span class="icon">📄</span>
+          <div class="label">Klik om een PDF te selecteren</div>
+          <div class="filename" id="nameOud"></div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Nieuwe tekening</label>
+        <div class="upload-box" id="boxNieuw">
+          <input type="file" accept=".pdf" id="nieuwPdf" required />
+          <span class="icon">📄</span>
+          <div class="label">Klik om een PDF te selecteren</div>
+          <div class="filename" id="nameNieuw"></div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Aantal pagina's</label>
+        <input type="number" id="aantalPaginas" min="1" max="50" placeholder="Automatisch (alle pagina's)" />
+        <div class="hint">Laat leeg om alle pagina's te vergelijken.</div>
+      </div>
+
+      <button type="submit" id="submitBtn">Vergelijk tekeningen</button>
+    </form>
+
+    <div id="loading">
+      <div class="spinner"></div>
+      <p>Bezig met vergelijken — dit kan even duren...</p>
+    </div>
+
+    <div id="result">
+      <div class="result-title">Klaar — download je bestanden</div>
+      <div class="downloads">
+        <a class="dl-btn rapport" id="dlRapport" download="rapport.pdf">
+          <span class="dl-icon">📋</span>
+          Rapport
+          <span class="dl-sub">Overzicht wijzigingen</span>
+        </a>
+        <a class="dl-btn tekeningen" id="dlTekeningen" download="tekeningen.pdf">
+          <span class="dl-icon">📐</span>
+          Tekeningen
+          <span class="dl-sub">Met markeringen</span>
+        </a>
+      </div>
+    </div>
+
+    <div id="error"></div>
+  </div>
+</main>
+
+<footer>Karregat &amp; Koning Afbouw &copy; 2025</footer>
+
+<script>
+  // Bestandsnaam tonen na selectie
+  function setupUpload(inputId, boxId, nameId) {
+    const input = document.getElementById(inputId);
+    const box = document.getElementById(boxId);
+    const name = document.getElementById(nameId);
+    input.addEventListener('change', () => {
+      if (input.files[0]) {
+        name.textContent = input.files[0].name;
+        box.classList.add('has-file');
+      }
+    });
+  }
+  setupUpload('oudPdf', 'boxOud', 'nameOud');
+  setupUpload('nieuwPdf', 'boxNieuw', 'nameNieuw');
+
+  // Formulier versturen
+  document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const oudFile = document.getElementById('oudPdf').files[0];
+    const nieuwFile = document.getElementById('nieuwPdf').files[0];
+    const aantalInput = document.getElementById('aantalPaginas').value;
+
+    if (!oudFile || !nieuwFile) return;
+
+    // UI: loading
+    document.getElementById('uploadForm').style.display = 'none';
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('result').style.display = 'none';
+    document.getElementById('error').style.display = 'none';
+
+    const formData = new FormData();
+    formData.append('oud_pdf', oudFile);
+    formData.append('nieuw_pdf', nieuwFile);
+    if (aantalInput) {
+      formData.append('aantal_paginas', aantalInput);
+    }
+
+    try {
+      const resp = await fetch('/vergelijk-split', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: 'Onbekende fout' }));
+        throw new Error(err.error || `Fout ${resp.status}`);
+      }
+
+      const data = await resp.json();
+
+      // Maak download links van base64
+      function b64toBlob(b64, mime) {
+        const bytes = atob(b64);
+        const arr = new Uint8Array(bytes.length);
+        for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+        return new Blob([arr], { type: mime });
+      }
+
+      const rapportBlob = b64toBlob(data.rapport_pdf, 'application/pdf');
+      const tekenBlob = b64toBlob(data.tekeningen_pdf, 'application/pdf');
+
+      document.getElementById('dlRapport').href = URL.createObjectURL(rapportBlob);
+      document.getElementById('dlTekeningen').href = URL.createObjectURL(tekenBlob);
+
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('result').style.display = 'block';
+
+    } catch (err) {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('uploadForm').style.display = 'block';
+      const errDiv = document.getElementById('error');
+      errDiv.textContent = 'Er ging iets mis: ' + err.message;
+      errDiv.style.display = 'block';
+    }
+  });
+</script>
+
+</body>
+</html>

@@ -4,16 +4,18 @@ import base64
 import logging
 import os
 import tempfile
+from pathlib import Path
 
 from fastapi import FastAPI, File, Form, UploadFile
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 import fitz
 
 from .config import DiffConfig
 from .diff_engine import run_diff
 from .interpreter import interpreteer_diff
-from .overlay import generate_overlay_pdf, generate_multi_page_overlay
+from .overlay import generate_overlay_pdf, generate_multi_page_overlay, generate_split_rapport
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,11 +29,20 @@ app = FastAPI(
     version="2.0.0",
 )
 
+# Statische bestanden (de webpagina)
+_static_dir = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
+
 PDF_MAGIC = b"%PDF"
 MAX_FILE_SIZE_MB = 50
 
 
 @app.get("/")
+def index():
+    return FileResponse(str(_static_dir / "index.html"))
+
+
+@app.get("/health")
 def health():
     return {"status": "ok", "version": "2.0"}
 
@@ -308,6 +319,76 @@ async def rapport_volledig(
         return JSONResponse(
             status_code=500,
             content={"error": f"Rapport fout: {str(e)}"},
+        )
+    finally:
+        for path in (oud_path, nieuw_path):
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+
+@app.post("/vergelijk-split")
+async def vergelijk_split(
+    oud_pdf: UploadFile = File(..., description="Oude versie van de PDF"),
+    nieuw_pdf: UploadFile = File(..., description="Nieuwe versie van de PDF"),
+    aantal_paginas: int | None = Form(None, description="Aantal pagina's (leeg = automatisch)"),
+):
+    """Hoofdendpoint voor de webinterface.
+
+    Genereert twee PDF's:
+      - rapport_pdf: A4 samenvatting per pagina
+      - tekeningen_pdf: gemarkeerde tekeningen met legenda
+
+    Beide worden als base64 teruggegeven zodat de browser ze direct kan downloaden.
+    """
+    oud_bytes = await oud_pdf.read()
+    nieuw_bytes = await nieuw_pdf.read()
+
+    result = _validate_and_save_pdfs(
+        oud_bytes, nieuw_bytes,
+        oud_pdf.filename or "oud.pdf", nieuw_pdf.filename or "nieuw.pdf",
+    )
+    if isinstance(result, JSONResponse):
+        return result
+    oud_path, nieuw_path = result
+
+    try:
+        if not aantal_paginas:
+            oud_doc = fitz.open(oud_path)
+            nieuw_doc = fitz.open(nieuw_path)
+            aantal_paginas = min(len(oud_doc), len(nieuw_doc))
+            oud_doc.close()
+            nieuw_doc.close()
+
+        aantal_paginas = max(1, min(aantal_paginas, 50))
+
+        logger.info(
+            "Vergelijk-split: '%s' vs '%s', %d pagina('s)",
+            oud_pdf.filename, nieuw_pdf.filename, aantal_paginas,
+        )
+
+        rapport_bytes, tekeningen_bytes = generate_split_rapport(
+            oud_path, nieuw_path, aantal_paginas,
+            oud_pdf.filename or "oud.pdf",
+            nieuw_pdf.filename or "nieuw.pdf",
+        )
+
+        logger.info(
+            "Vergelijk-split klaar: rapport=%dKB, tekeningen=%dKB",
+            len(rapport_bytes) // 1024, len(tekeningen_bytes) // 1024,
+        )
+
+        return JSONResponse(content={
+            "rapport_pdf": base64.b64encode(rapport_bytes).decode(),
+            "tekeningen_pdf": base64.b64encode(tekeningen_bytes).decode(),
+        })
+
+    except Exception as e:
+        logger.exception("Fout bij vergelijk-split")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Vergelijkingsfout: {str(e)}"},
         )
     finally:
         for path in (oud_path, nieuw_path):
