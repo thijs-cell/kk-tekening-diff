@@ -494,21 +494,27 @@ _RE_LETTER = re.compile(r"^[A-Z]$")
 
 
 _RE_OPP_CONTEXT = re.compile(r"m2|m²|m\u00b2|opp\.?", re.IGNORECASE)
+# Oppervlakte-eenheid direct na een getal: "4.25 m²", "2,70 m2"
+_RE_OPP_EENHEID = re.compile(r"\d[.,]?\d*\s*(m[²2]|m\u00b2)\b")
 
 
 def _categoriseer_tekst_wijziging(
     oud_tekst: str, nieuw_tekst: str,
     span_tekst_oud: str = "", span_tekst_nieuw: str = "",
 ) -> str:
-    # Oppervlakte eerst: ook als het getal gesplitst is van z'n eenheid
-    # check de volledige span-context (bijv. "Opp.: 2,70 m2")
-    for ctx in (span_tekst_oud, span_tekst_nieuw, oud_tekst, nieuw_tekst):
-        if _RE_OPP_CONTEXT.search(ctx):
-            return "oppervlakte"
     if _RE_NUMERIEK.match(oud_tekst) and _RE_NUMERIEK.match(nieuw_tekst):
+        # Numeriek getal: kijk of span-context aangeeft dat het een oppervlakte is.
+        # Gebruik _RE_OPP_EENHEID om "3.7 m2 K/W" (isolatie) te onderscheiden
+        # van "Opp.: 2,70 m2" (echte oppervlakte).
+        for ctx in (span_tekst_oud, span_tekst_nieuw):
+            if _RE_OPP_CONTEXT.search(ctx):
+                return "oppervlakte"
         return "maat"
     if _RE_LETTER.match(oud_tekst) or _RE_LETTER.match(nieuw_tekst):
         return "revisieletter"
+    # Niet-numerieke tekst: check op m² eenheid in de tekst zelf
+    if _RE_OPP_EENHEID.search(oud_tekst) or _RE_OPP_EENHEID.search(nieuw_tekst):
+        return "oppervlakte"
     combined = (oud_tekst + nieuw_tekst).lower()
     if "at." in combined or "type" in combined:
         return "ruimtelabel"
