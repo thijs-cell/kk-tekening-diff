@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
 
-# Map waar feedback + PDFs worden opgeslagen
-_feedback_dir = Path(__file__).parent.parent / "feedback-opslag"
+# Map waar feedback + PDFs worden opgeslagen (/tmp is altijd schrijfbaar)
+_feedback_dir = Path("/tmp/feedback-opslag")
 _feedback_dir.mkdir(exist_ok=True)
 
 app = FastAPI(
