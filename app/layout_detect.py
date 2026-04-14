@@ -34,20 +34,21 @@ class PageLayout:
     _fallback_koptekst_y: float = 0.0
 
     def is_excluded(self, pos: list | tuple) -> bool:
-        """Check of een punt in een uitgesloten zone valt."""
+        """Check of een punt in een uitgesloten zone valt.
+
+        Sluit alleen de legenda (renvooi) en koptekst uit —
+        NIET het titelblok, omdat detailtekeningen soms in
+        datzelfde rechterdeel van de pagina staan.
+        """
         pt = fitz.Point(pos[0], pos[1])
 
-        if self.titelblok and self.titelblok.contains(pt):
-            return True
         if self.legenda and self.legenda.contains(pt):
             return True
         if self.koptekst and self.koptekst.contains(pt):
             return True
 
         # Fallback: als geen zones gedetecteerd, gebruik ratio's
-        if not self.titelblok and not self.legenda:
-            pw = self.page_rect.width
-            ph = self.page_rect.height
+        if not self.legenda:
             if pos[0] > self._fallback_renvooi_x:
                 return True
             if pos[1] < self._fallback_koptekst_y:

@@ -130,10 +130,54 @@ def _hex_naam(r: float, g: float, b: float) -> tuple[str, str]:
 # Extractie
 # ---------------------------------------------------------------------------
 
+def _splits_span_op_gaten(chars: list, rgb: tuple) -> list[dict]:
+    """Splits een span in losse stukken op basis van ongebruikelijke gaten tussen tekens.
+
+    In bouwtekeningen worden maatgetallen soms zonder spatie aaneengeregen
+    in één span (bijv. "125345" voor "125" en "345"). Door de gap tussen
+    opeenvolgende tekens te meten kunnen we ze splitsen.
+
+    Drempel: gap > 0.8pt (karakter-breedte is typisch 3-5pt).
+    """
+    if not chars:
+        return []
+
+    GAP_DREMPEL = 0.8  # pt
+
+    stukken = []
+    huidig = [chars[0]]
+
+    for prev, curr in zip(chars, chars[1:]):
+        gap = curr["bbox"][0] - prev["bbox"][2]
+        if gap > GAP_DREMPEL:
+            stukken.append(huidig)
+            huidig = [curr]
+        else:
+            huidig.append(curr)
+    stukken.append(huidig)
+
+    items = []
+    for stuk in stukken:
+        tekst = "".join(c["c"] for c in stuk).strip()
+        if not tekst:
+            continue
+        x0 = stuk[0]["bbox"][0]
+        y0 = min(c["bbox"][1] for c in stuk)
+        x1 = stuk[-1]["bbox"][2]
+        y1 = max(c["bbox"][3] for c in stuk)
+        items.append({
+            "tekst": tekst,
+            "rgb": rgb,
+            "pos": (round(x0, 1), round(y0, 1)),
+            "bbox": (round(x0, 1), round(y0, 1), round(x1, 1), round(y1, 1)),
+        })
+    return items
+
+
 def _extract_tekst(page) -> list[dict]:
     items = []
     try:
-        blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
+        blocks = page.get_text("rawdict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
     except Exception:
         return items
     for block in blocks:
@@ -141,17 +185,26 @@ def _extract_tekst(page) -> list[dict]:
             continue
         for line in block.get("lines", []):
             for span in line.get("spans", []):
-                tekst = span.get("text", "").strip()
+                chars = span.get("chars", [])
+                tekst = "".join(c["c"] for c in chars).strip()
                 if not tekst:
                     continue
                 r, g, b = _span_color_to_rgb(span.get("color", 0))
-                bbox = span.get("bbox", (0, 0, 0, 0))
-                items.append({
-                    "tekst": tekst,
-                    "rgb": (round(r, 3), round(g, 3), round(b, 3)),
-                    "pos": (round(bbox[0], 1), round(bbox[1], 1)),
-                    "bbox": tuple(round(v, 1) for v in bbox),
-                })
+                rgb = (round(r, 3), round(g, 3), round(b, 3))
+
+                # Splits op gaten tussen tekens (bijv. "125345" → "125" + "345")
+                gesplitst = _splits_span_op_gaten(chars, rgb)
+                if gesplitst:
+                    items.extend(gesplitst)
+                else:
+                    # Fallback: gebruik bbox van de hele span
+                    bbox = span.get("bbox", (0, 0, 0, 0))
+                    items.append({
+                        "tekst": tekst,
+                        "rgb": rgb,
+                        "pos": (round(bbox[0], 1), round(bbox[1], 1)),
+                        "bbox": tuple(round(v, 1) for v in bbox),
+                    })
     return items
 
 

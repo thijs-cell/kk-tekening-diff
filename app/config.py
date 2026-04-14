@@ -17,7 +17,7 @@ class DiffConfig:
     koptekst_y_ratio: float = 0.05
 
     # --- Matching drempels ---
-    tekst_match_drempel: float = 15.0
+    tekst_match_drempel: float = 20.0
     lijn_match_drempel: float = 5.0
     fill_match_drempel: float = 10.0
 

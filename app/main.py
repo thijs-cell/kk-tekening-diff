@@ -6,6 +6,7 @@ import os
 import tempfile
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -22,6 +23,8 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
 
 app = FastAPI(
     title="K&K Tekening Diff",
@@ -40,6 +43,71 @@ MAX_FILE_SIZE_MB = 50
 @app.get("/")
 def index():
     return FileResponse(str(_static_dir / "index.html"))
+
+
+@app.post("/feedback")
+async def feedback(
+    oud_bestand: str = Form(""),
+    nieuw_bestand: str = Form(""),
+    pagina: str = Form(""),
+    type_probleem: str = Form(""),
+    locatie: str = Form(""),
+    wat_zag_je: str = Form(""),
+    wat_had_moeten: str = Form(""),
+):
+    """Ontvang feedback en stuur naar Slack."""
+    type_emoji = {
+        "gemiste_wijziging": "🔍 Gemiste wijziging",
+        "fout_markering": "❌ Fout markering",
+        "verkeerd_label": "🏷️ Verkeerd label",
+        "anders": "💬 Anders",
+    }.get(type_probleem, type_probleem)
+
+    blokken = [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": "📋 Nieuwe feedback — Tekeningvergelijker"},
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*Oude tekening:*\n{oud_bestand or '—'}"},
+                {"type": "mrkdwn", "text": f"*Nieuwe tekening:*\n{nieuw_bestand or '—'}"},
+                {"type": "mrkdwn", "text": f"*Pagina:*\n{pagina or '—'}"},
+                {"type": "mrkdwn", "text": f"*Type probleem:*\n{type_emoji}"},
+            ],
+        },
+    ]
+
+    if locatie:
+        blokken.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*📍 Locatie op tekening:*\n{locatie}"},
+        })
+    if wat_zag_je:
+        blokken.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*👁️ Wat stond er op de tekening:*\n{wat_zag_je}"},
+        })
+    if wat_had_moeten:
+        blokken.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*✅ Wat had het systeem moeten doen:*\n{wat_had_moeten}"},
+        })
+
+    if not SLACK_WEBHOOK_URL:
+        logger.warning("SLACK_WEBHOOK_URL niet ingesteld — feedback niet verstuurd")
+        return JSONResponse(status_code=503, content={"error": "Slack niet geconfigureerd."})
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(SLACK_WEBHOOK_URL, json={"blocks": blokken})
+            resp.raise_for_status()
+        logger.info("Feedback verstuurd naar Slack")
+        return JSONResponse(content={"ok": True})
+    except Exception as e:
+        logger.error("Slack feedback fout: %s", e)
+        return JSONResponse(status_code=500, content={"error": "Kon feedback niet versturen."})
 
 
 @app.get("/health")
