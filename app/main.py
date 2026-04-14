@@ -53,6 +53,7 @@ async def feedback(
     type_probleem: str = Form(""),
     locatie: str = Form(""),
     wat_zag_je: str = Form(""),
+    wat_fout: str = Form(""),
     wat_had_moeten: str = Form(""),
 ):
     """Ontvang feedback en stuur naar Slack."""
@@ -88,6 +89,11 @@ async def feedback(
         blokken.append({
             "type": "section",
             "text": {"type": "mrkdwn", "text": f"*👁️ Wat stond er op de tekening:*\n{wat_zag_je}"},
+        })
+    if wat_fout:
+        blokken.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*⚠️ Wat deed het systeem fout:*\n{wat_fout}"},
         })
     if wat_had_moeten:
         blokken.append({
