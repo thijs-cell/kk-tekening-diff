@@ -453,6 +453,8 @@
   // --- State ---
   let lastOudNaam   = '';
   let lastNieuwNaam = '';
+  let lastOudFile   = null;
+  let lastNieuwFile = null;
 
   // --- Vergelijken ---
   document.getElementById('uploadForm').addEventListener('submit', async (e) => {
@@ -466,6 +468,8 @@
 
     lastOudNaam   = oudFile.name;
     lastNieuwNaam = nieuwFile.name;
+    lastOudFile   = oudFile;
+    lastNieuwFile = nieuwFile;
 
     // UI: loading
     document.getElementById('uploadForm').style.display = 'none';
@@ -542,14 +546,16 @@
     btn.textContent = 'Versturen...';
 
     const formData = new FormData();
-    formData.append('oud_bestand',  lastOudNaam);
+    formData.append('oud_bestand',   lastOudNaam);
     formData.append('nieuw_bestand', lastNieuwNaam);
-    formData.append('pagina',       document.getElementById('fbPagina').value);
+    formData.append('pagina',        document.getElementById('fbPagina').value);
     formData.append('type_probleem', document.getElementById('fbType').value);
-    formData.append('locatie',      document.getElementById('fbLocatie').value);
-    formData.append('wat_zag_je',   document.getElementById('fbWatZag').value);
-    formData.append('wat_fout',     document.getElementById('fbWatFout').value);
+    formData.append('locatie',       document.getElementById('fbLocatie').value);
+    formData.append('wat_zag_je',    document.getElementById('fbWatZag').value);
+    formData.append('wat_fout',      document.getElementById('fbWatFout').value);
     formData.append('wat_had_moeten', document.getElementById('fbWatMoest').value);
+    if (lastOudFile)   formData.append('oud_pdf',   lastOudFile,   lastOudNaam);
+    if (lastNieuwFile) formData.append('nieuw_pdf', lastNieuwFile, lastNieuwNaam);
 
     try {
       const resp = await fetch('/feedback', { method: 'POST', body: formData });

@@ -1,6 +1,7 @@
 """FastAPI app voor K&K tekeningvergelijking."""
 
 import base64
+import datetime
 import logging
 import os
 import tempfile
@@ -25,6 +26,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
+
+# Map waar feedback + PDFs worden opgeslagen
+_feedback_dir = Path(__file__).parent.parent / "feedback-opslag"
+_feedback_dir.mkdir(exist_ok=True)
 
 app = FastAPI(
     title="K&K Tekening Diff",
@@ -55,8 +60,30 @@ async def feedback(
     wat_zag_je: str = Form(""),
     wat_fout: str = Form(""),
     wat_had_moeten: str = Form(""),
+    oud_pdf: UploadFile | None = File(None),
+    nieuw_pdf: UploadFile | None = File(None),
 ):
-    """Ontvang feedback en stuur naar Slack."""
+    """Ontvang feedback, sla PDFs op en stuur naar Slack."""
+    # Timestamp als unieke referentie
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    feedback_map = _feedback_dir / ts
+    feedback_map.mkdir(exist_ok=True)
+
+    # PDFs opslaan
+    for upload, naam in [(oud_pdf, oud_bestand), (nieuw_pdf, nieuw_bestand)]:
+        if upload:
+            inhoud = await upload.read()
+            if inhoud:
+                bestandsnaam = naam or upload.filename or "onbekend.pdf"
+                (feedback_map / bestandsnaam).write_bytes(inhoud)
+
+    # Downloadlink voor dit feedback-item
+    base_url = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
+    if base_url:
+        download_url = f"https://{base_url}/feedback-bestanden/{ts}"
+    else:
+        download_url = f"/feedback-bestanden/{ts}"
+
     type_emoji = {
         "gemiste_wijziging": "🔍 Gemiste wijziging",
         "fout_markering": "❌ Fout markering",
@@ -101,6 +128,11 @@ async def feedback(
             "text": {"type": "mrkdwn", "text": f"*✅ Wat had het systeem moeten doen:*\n{wat_had_moeten}"},
         })
 
+    blokken.append({
+        "type": "section",
+        "text": {"type": "mrkdwn", "text": f"*📁 Tekeningen downloaden:*\n<{download_url}|Klik hier — referentie: {ts}>"},
+    })
+
     if not SLACK_WEBHOOK_URL:
         logger.warning("SLACK_WEBHOOK_URL niet ingesteld — feedback niet verstuurd")
         return JSONResponse(status_code=503, content={"error": "Slack niet geconfigureerd."})
@@ -109,11 +141,31 @@ async def feedback(
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(SLACK_WEBHOOK_URL, json={"blocks": blokken})
             resp.raise_for_status()
-        logger.info("Feedback verstuurd naar Slack")
+        logger.info("Feedback verstuurd naar Slack (ref: %s)", ts)
         return JSONResponse(content={"ok": True})
     except Exception as e:
         logger.error("Slack feedback fout: %s", e)
         return JSONResponse(status_code=500, content={"error": "Kon feedback niet versturen."})
+
+
+@app.get("/feedback-bestanden/{ts}")
+def feedback_bestanden_lijst(ts: str):
+    """Toon lijst van opgeslagen feedback-bestanden voor een tijdstempel."""
+    feedback_map = _feedback_dir / ts
+    if not feedback_map.exists():
+        return JSONResponse(status_code=404, content={"error": "Niet gevonden."})
+    bestanden = [f.name for f in feedback_map.iterdir()]
+    return JSONResponse(content={"referentie": ts, "bestanden": bestanden})
+
+
+@app.get("/feedback-bestanden/{ts}/{bestandsnaam}")
+def feedback_bestand_download(ts: str, bestandsnaam: str):
+    """Download een opgeslagen feedback-bestand."""
+    pad = _feedback_dir / ts / bestandsnaam
+    if not pad.exists() or not pad.is_file():
+        return JSONResponse(status_code=404, content={"error": "Bestand niet gevonden."})
+    return FileResponse(str(pad), media_type="application/pdf",
+                        headers={"Content-Disposition": f"attachment; filename={bestandsnaam}"})
 
 
 @app.get("/health")
