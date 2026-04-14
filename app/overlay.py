@@ -274,7 +274,6 @@ def _collect_oppervlakte(diff_result: dict, pw: float, ph: float, alle_tekst: li
     """Oppervlaktewijzigingen: gewijzigde m² waarden."""
     items = []
     renvooi = 0
-    re_opp = re.compile(r"\d+[.,]\d+\s*m")
     for item in diff_result.get("tekst_gewijzigd", []):
         if item.get("categorie") != "oppervlakte":
             continue
@@ -284,7 +283,11 @@ def _collect_oppervlakte(diff_result: dict, pw: float, ph: float, alle_tekst: li
             continue
         oud = item.get("oud_tekst", "")
         nieuw = item.get("nieuw_tekst", "")
-        if not (re_opp.search(oud) and re_opp.search(nieuw)):
+        # Sla "m2"/"m²" items zelf over — de waarde is al in een ander gesplitst item
+        if oud.strip().lower() in ("m2", "m²", "m\u00b2") or nieuw.strip().lower() in ("m2", "m²", "m\u00b2"):
+            continue
+        # Sla "Opp.:" items over — alleen de waarde is relevant
+        if oud.strip().lower().startswith("opp") or nieuw.strip().lower().startswith("opp"):
             continue
         bbox = item.get("nieuw_bbox")
         rect = _bbox_to_rect(bbox) if bbox else _rect_from_pos(*pos)

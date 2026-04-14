@@ -130,7 +130,7 @@ def _hex_naam(r: float, g: float, b: float) -> tuple[str, str]:
 # Extractie
 # ---------------------------------------------------------------------------
 
-def _splits_span_op_gaten(chars: list, rgb: tuple) -> list[dict]:
+def _splits_span_op_gaten(chars: list, rgb: tuple, span_tekst: str = "") -> list[dict]:
     """Splits een span in losse stukken op basis van ongebruikelijke gaten tussen tekens.
 
     In bouwtekeningen worden maatgetallen soms zonder spatie aaneengeregen
@@ -170,6 +170,7 @@ def _splits_span_op_gaten(chars: list, rgb: tuple) -> list[dict]:
             "rgb": rgb,
             "pos": (round(x0, 1), round(y0, 1)),
             "bbox": (round(x0, 1), round(y0, 1), round(x1, 1), round(y1, 1)),
+            "span_tekst": span_tekst,
         })
     return items
 
@@ -193,7 +194,8 @@ def _extract_tekst(page) -> list[dict]:
                 rgb = (round(r, 3), round(g, 3), round(b, 3))
 
                 # Splits op gaten tussen tekens (bijv. "125345" → "125" + "345")
-                gesplitst = _splits_span_op_gaten(chars, rgb)
+                # span_tekst meegeven zodat context bewaard blijft (bijv. "Opp.: 2,70 m2")
+                gesplitst = _splits_span_op_gaten(chars, rgb, span_tekst=tekst)
                 if gesplitst:
                     items.extend(gesplitst)
                 else:
@@ -491,13 +493,22 @@ _RE_NUMERIEK = re.compile(r"^[\d.,]+$")
 _RE_LETTER = re.compile(r"^[A-Z]$")
 
 
-def _categoriseer_tekst_wijziging(oud_tekst: str, nieuw_tekst: str) -> str:
+_RE_OPP_CONTEXT = re.compile(r"m2|m²|m\u00b2|opp\.?", re.IGNORECASE)
+
+
+def _categoriseer_tekst_wijziging(
+    oud_tekst: str, nieuw_tekst: str,
+    span_tekst_oud: str = "", span_tekst_nieuw: str = "",
+) -> str:
+    # Oppervlakte eerst: ook als het getal gesplitst is van z'n eenheid
+    # check de volledige span-context (bijv. "Opp.: 2,70 m2")
+    for ctx in (span_tekst_oud, span_tekst_nieuw, oud_tekst, nieuw_tekst):
+        if _RE_OPP_CONTEXT.search(ctx):
+            return "oppervlakte"
     if _RE_NUMERIEK.match(oud_tekst) and _RE_NUMERIEK.match(nieuw_tekst):
         return "maat"
     if _RE_LETTER.match(oud_tekst) or _RE_LETTER.match(nieuw_tekst):
         return "revisieletter"
-    if "m\u00b2" in oud_tekst or "m\u00b2" in nieuw_tekst:
-        return "oppervlakte"
     combined = (oud_tekst + nieuw_tekst).lower()
     if "at." in combined or "type" in combined:
         return "ruimtelabel"
@@ -821,7 +832,11 @@ def run_diff(
                 "nieuw_bbox": list(n["bbox"]),
                 "oud_kleur": oh,
                 "nieuw_kleur": on_h,
-                "categorie": _categoriseer_tekst_wijziging(o["tekst"], n["tekst"]),
+                "categorie": _categoriseer_tekst_wijziging(
+                    o["tekst"], n["tekst"],
+                    span_tekst_oud=o.get("span_tekst", ""),
+                    span_tekst_nieuw=n.get("span_tekst", ""),
+                ),
             })
 
         # 2. Tekst toegevoegd
