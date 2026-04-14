@@ -765,13 +765,36 @@ def _teken_titel_balk(page, tekst: str):
     page.insert_text(fitz.Point(10, 14), tekst, fontsize=9, color=(1, 1, 1))
 
 
+def _kies_legenda_positie(page, box_w: float, box_h: float, marge: float = 15.0) -> tuple[float, float]:
+    """Kies de rustiest hoek voor de legenda (minste tekst-blokken in het gebied)."""
+    pw, ph = page.rect.width, page.rect.height
+    kandidaten = [
+        (marge, ph - box_h - marge),           # linksonder (voorkeur)
+        (pw - box_w - marge, ph - box_h - marge),  # rechtsonder
+        (marge, marge),                         # linksboven
+        (pw - box_w - marge, marge),            # rechtsboven
+    ]
+    tekst_blokken = page.get_text("blocks")  # [(x0,y0,x1,y1,tekst,...), ...]
+
+    def _overlap_score(x0, y0):
+        box = fitz.Rect(x0, y0, x0 + box_w, y0 + box_h)
+        score = 0
+        for blok in tekst_blokken:
+            bx0, by0, bx1, by1 = blok[0], blok[1], blok[2], blok[3]
+            if box.intersects(fitz.Rect(bx0, by0, bx1, by1)):
+                score += 1
+        return score
+
+    beste = min(kandidaten, key=lambda p: _overlap_score(p[0], p[1]))
+    return beste
+
+
 def _teken_legenda(page, tellingen: list[tuple]):
-    """Legenda linksonder met titel, groter en duidelijker.
+    """Legenda in de minst drukke hoek, volledig opaque zodat het niet door de tekening heen staat.
 
     tellingen: [(stijl, label, count, vorm), ...]
       vorm = "rect" (default) of "cirkel" of "pijl"
     """
-    pw, ph = page.rect.width, page.rect.height
     visible = []
     for entry in tellingen:
         stijl, label, count = entry[0], entry[1], entry[2]
@@ -784,15 +807,15 @@ def _teken_legenda(page, tellingen: list[tuple]):
     rij_h = 22
     box_w = 300
     box_h = 28 + len(visible) * rij_h
-    x0 = 15
-    y0 = ph - box_h - 15
 
-    # Achtergrond
+    x0, y0 = _kies_legenda_positie(page, box_w, box_h)
+
+    # Achtergrond — volledig opaque zodat tekening er niet doorheen schijnt
     bg = fitz.Rect(x0, y0, x0 + box_w, y0 + box_h)
     shape = page.new_shape()
     shape.draw_rect(bg)
     shape.finish(color=(0.1, 0.1, 0.1), fill=(1, 1, 1),
-                 fill_opacity=0.95, width=2.0)
+                 fill_opacity=1.0, width=2.0)
     shape.commit()
 
     # Titel
@@ -802,7 +825,6 @@ def _teken_legenda(page, tellingen: list[tuple]):
 
     for stijl, label, count, vorm in visible:
         if vorm == "pijl":
-            # Pijltje icoon
             s = page.new_shape()
             s.draw_line(fitz.Point(x0 + 8, y - 4), fitz.Point(x0 + 22, y - 4))
             s.finish(color=stijl["color"], width=2.0)
@@ -813,7 +835,6 @@ def _teken_legenda(page, tellingen: list[tuple]):
             s2.finish(color=stijl["color"], width=1.5)
             s2.commit()
         else:
-            # Vierkantje icoon
             blok = fitz.Rect(x0 + 8, y - 10, x0 + 22, y)
             s = page.new_shape()
             s.draw_rect(blok)
