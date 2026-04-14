@@ -275,6 +275,11 @@ def _afstand(p1: tuple, p2: tuple) -> float:
 # Tekst vergelijking
 # ---------------------------------------------------------------------------
 
+_RE_NUMERIEK_MATCH = re.compile(r"^\d[\d,. ]*$")
+_RE_OPP_CONTEXT_VROEG = re.compile(r"m2|m²|m\u00b2|opp\.?", re.IGNORECASE)
+_GROTE_DREMPEL = 60.0  # voor oppervlakte-getallen die meebewegen met de ruimte
+
+
 def _vergelijk_tekst(oud_items: list, nieuw_items: list, drempel: float = 15.0):
     gewijzigd = []
     kleur_gewijzigd = []
@@ -320,6 +325,53 @@ def _vergelijk_tekst(oud_items: list, nieuw_items: list, drempel: float = 15.0):
     for idx, nieuw in enumerate(nieuw_items):
         if idx not in matched_nieuw:
             toegevoegd.append(nieuw)
+
+    # ── Tweede pass: numerieke teksten die verder meebewogen zijn (ruimte verschoven) ──
+    # Alleen voor getallen in oppervlakte-context (span_tekst bevat m2/opp)
+    grote_grid: dict[tuple, list] = defaultdict(list)
+    for idx, nieuw in enumerate(nieuw_items):
+        if idx not in matched_nieuw and _RE_NUMERIEK_MATCH.match(nieuw["tekst"]):
+            gk = _grid_key(nieuw["pos"][0], nieuw["pos"][1], _GROTE_DREMPEL * 2)
+            grote_grid[gk].append(idx)
+
+    still_verdwenen = []
+    for oud in verdwenen:
+        if not _RE_NUMERIEK_MATCH.match(oud["tekst"]):
+            still_verdwenen.append(oud)
+            continue
+        opp_ctx = _RE_OPP_CONTEXT_VROEG.search(oud.get("span_tekst", ""))
+        if not opp_ctx:
+            still_verdwenen.append(oud)
+            continue
+        beste2 = None
+        beste2_d = float("inf")
+        beste2_idx = -1
+        gk = _grid_key(oud["pos"][0], oud["pos"][1], _GROTE_DREMPEL * 2)
+        for cell in _grid_neighbors(*gk):
+            for idx in grote_grid.get(cell, ()):
+                if idx in matched_nieuw:
+                    continue
+                nieuw = nieuw_items[idx]
+                if not _RE_OPP_CONTEXT_VROEG.search(nieuw.get("span_tekst", "")):
+                    continue
+                d = _afstand(oud["pos"], nieuw["pos"])
+                if d < beste2_d and d < _GROTE_DREMPEL:
+                    beste2 = nieuw
+                    beste2_d = d
+                    beste2_idx = idx
+        if beste2 is not None:
+            matched_nieuw.add(beste2_idx)
+            if oud["tekst"] != beste2["tekst"]:
+                gewijzigd.append({"oud": oud, "nieuw": beste2})
+            elif oud["rgb"] != beste2["rgb"]:
+                kleur_gewijzigd.append({
+                    "tekst": oud["tekst"], "pos": oud["pos"],
+                    "oud_rgb": oud["rgb"], "nieuw_rgb": beste2["rgb"],
+                })
+        else:
+            still_verdwenen.append(oud)
+
+    verdwenen = still_verdwenen
 
     return gewijzigd, toegevoegd, verdwenen, kleur_gewijzigd
 
