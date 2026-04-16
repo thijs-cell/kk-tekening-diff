@@ -114,6 +114,7 @@ def index():
 async def feedback(
     oud_bestand: str = Form(""),
     nieuw_bestand: str = Form(""),
+    project_naam: str = Form(""),
     pagina: str = Form(""),
     type_probleem: str = Form(""),
     locatie: str = Form(""),
@@ -122,9 +123,9 @@ async def feedback(
     wat_had_moeten: str = Form(""),
     oud_pdf: UploadFile | None = File(None),
     nieuw_pdf: UploadFile | None = File(None),
+    screenshot: UploadFile | None = File(None),
 ):
-    """Ontvang feedback, sla PDFs op en stuur naar Slack."""
-    # Timestamp als unieke referentie
+    """Ontvang feedback, sla PDFs + screenshot op en stuur naar Slack."""
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     feedback_map = _feedback_dir / ts
     feedback_map.mkdir(exist_ok=True)
@@ -136,6 +137,18 @@ async def feedback(
             if inhoud:
                 bestandsnaam = naam or upload.filename or "onbekend.pdf"
                 (feedback_map / bestandsnaam).write_bytes(inhoud)
+
+    # Screenshot opslaan
+    screenshot_url = ""
+    if screenshot:
+        scherm_inhoud = await screenshot.read()
+        if scherm_inhoud:
+            ext = Path(screenshot.filename or "screenshot.png").suffix or ".png"
+            scherm_naam = f"screenshot{ext}"
+            (feedback_map / scherm_naam).write_bytes(scherm_inhoud)
+            base_url = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
+            if base_url:
+                screenshot_url = f"https://{base_url}/feedback-bestanden/{ts}/{scherm_naam}"
 
     # Downloadlink voor dit feedback-item
     base_url = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
@@ -159,10 +172,11 @@ async def feedback(
         {
             "type": "section",
             "fields": [
-                {"type": "mrkdwn", "text": f"*Oude tekening:*\n{oud_bestand or '—'}"},
-                {"type": "mrkdwn", "text": f"*Nieuwe tekening:*\n{nieuw_bestand or '—'}"},
+                {"type": "mrkdwn", "text": f"*Project:*\n{project_naam or '—'}"},
                 {"type": "mrkdwn", "text": f"*Pagina:*\n{pagina or '—'}"},
                 {"type": "mrkdwn", "text": f"*Type probleem:*\n{type_emoji}"},
+                {"type": "mrkdwn", "text": f"*Oude tekening:*\n{oud_bestand or '—'}"},
+                {"type": "mrkdwn", "text": f"*Nieuwe tekening:*\n{nieuw_bestand or '—'}"},
             ],
         },
     ]
@@ -187,10 +201,15 @@ async def feedback(
             "type": "section",
             "text": {"type": "mrkdwn", "text": f"*✅ Wat had het systeem moeten doen:*\n{wat_had_moeten}"},
         })
+    if screenshot_url:
+        blokken.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*🖼️ Screenshot:*\n<{screenshot_url}|Bekijk screenshot>"},
+        })
 
     blokken.append({
         "type": "section",
-        "text": {"type": "mrkdwn", "text": f"*📁 Tekeningen downloaden:*\n<{download_url}|Klik hier — referentie: {ts}>"},
+        "text": {"type": "mrkdwn", "text": f"*📁 Bestanden downloaden:*\n<{download_url}|Klik hier — referentie: {ts}>"},
     })
 
     if not SLACK_WEBHOOK_URL:

@@ -386,6 +386,11 @@
 
         <form id="feedbackForm">
           <div class="field">
+            <label>Projectnaam</label>
+            <input type="text" id="fbProject" placeholder="Bijv. Taxuslaan 5102, BD/BU Noordblok..." />
+          </div>
+
+          <div class="field">
             <label>Pagina met het probleem</label>
             <input type="number" id="fbPagina" min="1" placeholder="Bijv. 1" />
           </div>
@@ -420,6 +425,12 @@
           <div class="field">
             <label>Wat had het systeem moeten doen?</label>
             <textarea id="fbWatMoest" placeholder="Bijv. oranje vakje plaatsen bij de maat 450 → 345 op de linker wand"></textarea>
+          </div>
+
+          <div class="field">
+            <label>Screenshot (optioneel)</label>
+            <input type="file" id="fbScreenshot" accept="image/*,.pdf" />
+            <div class="hint">Maak een screenshot van het probleem en upload het hier.</div>
           </div>
 
           <button type="submit" class="btn-primary" id="feedbackSubmitBtn">Verstuur feedback</button>
@@ -546,16 +557,19 @@
     btn.textContent = 'Versturen...';
 
     const formData = new FormData();
-    formData.append('oud_bestand',   lastOudNaam);
-    formData.append('nieuw_bestand', lastNieuwNaam);
-    formData.append('pagina',        document.getElementById('fbPagina').value);
-    formData.append('type_probleem', document.getElementById('fbType').value);
-    formData.append('locatie',       document.getElementById('fbLocatie').value);
-    formData.append('wat_zag_je',    document.getElementById('fbWatZag').value);
-    formData.append('wat_fout',      document.getElementById('fbWatFout').value);
+    formData.append('oud_bestand',    lastOudNaam);
+    formData.append('nieuw_bestand',  lastNieuwNaam);
+    formData.append('project_naam',   document.getElementById('fbProject').value);
+    formData.append('pagina',         document.getElementById('fbPagina').value);
+    formData.append('type_probleem',  document.getElementById('fbType').value);
+    formData.append('locatie',        document.getElementById('fbLocatie').value);
+    formData.append('wat_zag_je',     document.getElementById('fbWatZag').value);
+    formData.append('wat_fout',       document.getElementById('fbWatFout').value);
     formData.append('wat_had_moeten', document.getElementById('fbWatMoest').value);
     if (lastOudFile)   formData.append('oud_pdf',   lastOudFile,   lastOudNaam);
     if (lastNieuwFile) formData.append('nieuw_pdf', lastNieuwFile, lastNieuwNaam);
+    const scherm = document.getElementById('fbScreenshot').files[0];
+    if (scherm) formData.append('screenshot', scherm, scherm.name);
 
     try {
       const resp = await fetch('/feedback', { method: 'POST', body: formData });
