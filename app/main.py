@@ -7,12 +7,12 @@ import os
 import tempfile
 from pathlib import Path
 
+import hashlib
 import secrets
 
 import httpx
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, Response
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi import Cookie, Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import fitz
@@ -32,18 +32,17 @@ SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
 APP_USERNAME = os.environ.get("APP_USERNAME", "GiboTekening")
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
 
-security = HTTPBasic()
+# Sessie-token = hash van gebruikersnaam + wachtwoord (stabiel, geen opslag nodig)
+def _maak_sessie_token() -> str:
+    combo = f"{APP_USERNAME}:{APP_PASSWORD}"
+    return hashlib.sha256(combo.encode()).hexdigest()
 
 
-def _check_auth(credentials: HTTPBasicCredentials = Depends(security)):
-    ok_user = secrets.compare_digest(credentials.username.encode(), APP_USERNAME.encode())
-    ok_pass = secrets.compare_digest(credentials.password.encode(), APP_PASSWORD.encode()) if APP_PASSWORD else True
-    if not (ok_user and ok_pass):
-        raise HTTPException(
-            status_code=401,
-            detail="Geen toegang",
-            headers={"WWW-Authenticate": "Basic"},
-        )
+def _check_sessie(kk_sessie: str | None = Cookie(default=None)):
+    if not APP_PASSWORD:
+        return  # Auth uitgeschakeld als geen wachtwoord ingesteld
+    if not kk_sessie or not secrets.compare_digest(kk_sessie, _maak_sessie_token()):
+        raise HTTPException(status_code=401, detail="Niet ingelogd")
 
 # Map waar feedback + PDFs worden opgeslagen (/tmp is altijd schrijfbaar)
 _feedback_dir = Path("/tmp/feedback-opslag")
@@ -53,7 +52,7 @@ app = FastAPI(
     title="K&K Tekening Diff",
     description="Vergelijk PDF demarcatietekeningen en detecteer wijzigingen.",
     version="2.0.0",
-    dependencies=[Depends(_check_auth)],
+    dependencies=[Depends(_check_sessie)],
 )
 
 # Statische bestanden (de webpagina)
@@ -64,8 +63,35 @@ PDF_MAGIC = b"%PDF"
 MAX_FILE_SIZE_MB = 50
 
 
+@app.get("/login", dependencies=[])
+def login_pagina():
+    return FileResponse(str(_static_dir / "login.html"))
+
+
+@app.post("/login", dependencies=[])
+def login_submit(
+    gebruikersnaam: str = Form(...),
+    wachtwoord: str = Form(...),
+):
+    ok_user = secrets.compare_digest(gebruikersnaam.encode(), APP_USERNAME.encode())
+    ok_pass = secrets.compare_digest(wachtwoord.encode(), APP_PASSWORD.encode()) if APP_PASSWORD else True
+    if not (ok_user and ok_pass):
+        raise HTTPException(status_code=401, detail="Onjuiste inloggegevens")
+    resp = JSONResponse(content={"ok": True})
+    resp.set_cookie(
+        key="kk_sessie",
+        value=_maak_sessie_token(),
+        httponly=True,
+        samesite="lax",
+        max_age=60 * 60 * 24 * 30,  # 30 dagen
+    )
+    return resp
+
+
 @app.get("/")
-def index():
+def index(kk_sessie: str | None = Cookie(default=None)):
+    if APP_PASSWORD and (not kk_sessie or not secrets.compare_digest(kk_sessie, _maak_sessie_token())):
+        return RedirectResponse(url="/login")
     return FileResponse(str(_static_dir / "index.html"))
 
 

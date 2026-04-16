@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Inloggen — K&amp;K Afbouw</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: #1a1a1a;
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .login-box {
+      background: #232323;
+      border: 1px solid #333;
+      border-radius: 12px;
+      padding: 48px 40px;
+      width: 100%;
+      max-width: 400px;
+      text-align: center;
+    }
+
+    .logo {
+      height: 64px;
+      margin-bottom: 24px;
+      object-fit: contain;
+    }
+
+    h1 {
+      font-size: 1.3rem;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 8px;
+    }
+
+    p.sub {
+      font-size: 0.9rem;
+      color: #888;
+      margin-bottom: 32px;
+    }
+
+    label {
+      display: block;
+      text-align: left;
+      font-size: 0.85rem;
+      color: #aaa;
+      margin-bottom: 6px;
+    }
+
+    input {
+      width: 100%;
+      padding: 12px 14px;
+      background: #1a1a1a;
+      border: 1px solid #444;
+      border-radius: 8px;
+      color: #fff;
+      font-size: 1rem;
+      margin-bottom: 20px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    input:focus {
+      border-color: #e67e22;
+    }
+
+    button {
+      width: 100%;
+      padding: 13px;
+      background: #e67e22;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    button:hover { background: #cf6d17; }
+
+    .fout {
+      background: #3d1a1a;
+      border: 1px solid #7c2d2d;
+      color: #f87171;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 0.9rem;
+      margin-bottom: 20px;
+      display: none;
+    }
+
+    .fout.zichtbaar { display: block; }
+  </style>
+</head>
+<body>
+  <div class="login-box">
+    <img src="/static/logo.jpg" alt="K&amp;K Afbouw" class="logo" />
+    <h1>Tekeningvergelijking</h1>
+    <p class="sub">Log in om verder te gaan</p>
+
+    <div class="fout" id="foutmelding">Gebruikersnaam of wachtwoord onjuist.</div>
+
+    <form id="loginForm">
+      <label for="gebruikersnaam">Gebruikersnaam</label>
+      <input type="text" id="gebruikersnaam" placeholder="Gebruikersnaam" autocomplete="username" required />
+
+      <label for="wachtwoord">Wachtwoord</label>
+      <input type="password" id="wachtwoord" placeholder="Wachtwoord" autocomplete="current-password" required />
+
+      <button type="submit">Inloggen</button>
+    </form>
+  </div>
+
+  <script>
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const gebruikersnaam = document.getElementById('gebruikersnaam').value;
+      const wachtwoord = document.getElementById('wachtwoord').value;
+      const fout = document.getElementById('foutmelding');
+
+      try {
+        const resp = await fetch('/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: `gebruikersnaam=${encodeURIComponent(gebruikersnaam)}&wachtwoord=${encodeURIComponent(wachtwoord)}`,
+        });
+
+        if (resp.ok) {
+          window.location.href = '/';
+        } else {
+          fout.classList.add('zichtbaar');
+        }
+      } catch {
+        fout.classList.add('zichtbaar');
+      }
+    });
+  </script>
+</body>
+</html>
