@@ -11,7 +11,8 @@ import hashlib
 import secrets
 
 import httpx
-from fastapi import Cookie, Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Cookie, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -38,12 +39,6 @@ def _maak_sessie_token() -> str:
     return hashlib.sha256(combo.encode()).hexdigest()
 
 
-def _check_sessie(kk_sessie: str | None = Cookie(default=None)):
-    if not APP_PASSWORD:
-        return  # Auth uitgeschakeld als geen wachtwoord ingesteld
-    if not kk_sessie or not secrets.compare_digest(kk_sessie, _maak_sessie_token()):
-        raise HTTPException(status_code=401, detail="Niet ingelogd")
-
 # Map waar feedback + PDFs worden opgeslagen (/tmp is altijd schrijfbaar)
 _feedback_dir = Path("/tmp/feedback-opslag")
 _feedback_dir.mkdir(exist_ok=True)
@@ -52,8 +47,30 @@ app = FastAPI(
     title="K&K Tekening Diff",
     description="Vergelijk PDF demarcatietekeningen en detecteer wijzigingen.",
     version="2.0.0",
-    dependencies=[Depends(_check_sessie)],
 )
+
+
+class _AuthMiddleware(BaseHTTPMiddleware):
+    """Stuur niet-ingelogde gebruikers naar /login. API-calls krijgen 401."""
+    _OPEN_PADEN = {"/login", "/health"}
+
+    async def dispatch(self, request: Request, call_next):
+        pad = request.url.path
+        if pad in self._OPEN_PADEN or pad.startswith("/static"):
+            return await call_next(request)
+        if not APP_PASSWORD:
+            return await call_next(request)
+        kk_sessie = request.cookies.get("kk_sessie")
+        geldig = kk_sessie and secrets.compare_digest(kk_sessie, _maak_sessie_token())
+        if not geldig:
+            # Browser-verzoek → doorsturen naar loginpagina
+            if "text/html" in request.headers.get("accept", ""):
+                return RedirectResponse(url="/login")
+            return JSONResponse(status_code=401, content={"detail": "Niet ingelogd"})
+        return await call_next(request)
+
+
+app.add_middleware(_AuthMiddleware)
 
 # Statische bestanden (de webpagina)
 _static_dir = Path(__file__).parent / "static"
@@ -89,9 +106,7 @@ def login_submit(
 
 
 @app.get("/")
-def index(kk_sessie: str | None = Cookie(default=None)):
-    if APP_PASSWORD and (not kk_sessie or not secrets.compare_digest(kk_sessie, _maak_sessie_token())):
-        return RedirectResponse(url="/login")
+def index():
     return FileResponse(str(_static_dir / "index.html"))
 
 
