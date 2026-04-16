@@ -56,7 +56,7 @@ class _AuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         pad = request.url.path
-        if pad in self._OPEN_PADEN or pad.startswith("/static"):
+        if pad in self._OPEN_PADEN or pad.startswith("/static") or pad.startswith("/feedback-bestanden"):
             return await call_next(request)
         if not APP_PASSWORD:
             return await call_next(request)
@@ -201,16 +201,26 @@ async def feedback(
             "type": "section",
             "text": {"type": "mrkdwn", "text": f"*✅ Wat had het systeem moeten doen:*\n{wat_had_moeten}"},
         })
-    if screenshot_url:
+    # Directe downloadlinks per bestand (geen login nodig)
+    links = []
+    if base_url:
+        if oud_bestand:
+            links.append(f"<https://{base_url}/feedback-bestanden/{ts}/{oud_bestand}|📄 {oud_bestand} (oud)>")
+        if nieuw_bestand:
+            links.append(f"<https://{base_url}/feedback-bestanden/{ts}/{nieuw_bestand}|📄 {nieuw_bestand} (nieuw)>")
+        if screenshot_url:
+            links.append(f"<{screenshot_url}|🖼️ Screenshot>")
+
+    if links:
         blokken.append({
             "type": "section",
-            "text": {"type": "mrkdwn", "text": f"*🖼️ Screenshot:*\n<{screenshot_url}|Bekijk screenshot>"},
+            "text": {"type": "mrkdwn", "text": "*📁 Bestanden:*\n" + "\n".join(links)},
         })
-
-    blokken.append({
-        "type": "section",
-        "text": {"type": "mrkdwn", "text": f"*📁 Bestanden downloaden:*\n<{download_url}|Klik hier — referentie: {ts}>"},
-    })
+    else:
+        blokken.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*📁 Bestanden downloaden:*\n<{download_url}|Klik hier — referentie: {ts}>"},
+        })
 
     if not SLACK_WEBHOOK_URL:
         logger.warning("SLACK_WEBHOOK_URL niet ingesteld — feedback niet verstuurd")
