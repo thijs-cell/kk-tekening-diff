@@ -7,9 +7,12 @@ import os
 import tempfile
 from pathlib import Path
 
+import secrets
+
 import httpx
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 
 import fitz
@@ -26,6 +29,21 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
+APP_USERNAME = os.environ.get("APP_USERNAME", "GiboTekening")
+APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
+
+security = HTTPBasic()
+
+
+def _check_auth(credentials: HTTPBasicCredentials = Depends(security)):
+    ok_user = secrets.compare_digest(credentials.username.encode(), APP_USERNAME.encode())
+    ok_pass = secrets.compare_digest(credentials.password.encode(), APP_PASSWORD.encode()) if APP_PASSWORD else True
+    if not (ok_user and ok_pass):
+        raise HTTPException(
+            status_code=401,
+            detail="Geen toegang",
+            headers={"WWW-Authenticate": "Basic"},
+        )
 
 # Map waar feedback + PDFs worden opgeslagen (/tmp is altijd schrijfbaar)
 _feedback_dir = Path("/tmp/feedback-opslag")
@@ -35,6 +53,7 @@ app = FastAPI(
     title="K&K Tekening Diff",
     description="Vergelijk PDF demarcatietekeningen en detecteer wijzigingen.",
     version="2.0.0",
+    dependencies=[Depends(_check_auth)],
 )
 
 # Statische bestanden (de webpagina)
