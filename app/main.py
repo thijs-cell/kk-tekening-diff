@@ -12,7 +12,7 @@ import secrets
 
 import httpx
 from fastapi import Cookie, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
