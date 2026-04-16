@@ -277,7 +277,9 @@ def _afstand(p1: tuple, p2: tuple) -> float:
 
 _RE_NUMERIEK_MATCH = re.compile(r"^\d[\d,. ]*$")
 _RE_OPP_CONTEXT_VROEG = re.compile(r"m2|m²|m\u00b2|opp\.?", re.IGNORECASE)
-_GROTE_DREMPEL = 60.0  # voor oppervlakte-getallen die meebewegen met de ruimte
+_RE_OPP_WAARDE = re.compile(r"^\d+[.,]\d+$")   # decimaal getal: "5.11", "4.72"
+_RE_REFERENTIENR = re.compile(r"^\d{1,2}$")     # kamerreferentie: "6", "10"
+_GROTE_DREMPEL = 100.0  # voor oppervlakte-getallen die meebewegen met de ruimte
 
 
 def _vergelijk_tekst(oud_items: list, nieuw_items: list, drempel: float = 15.0):
@@ -304,6 +306,12 @@ def _vergelijk_tekst(oud_items: list, nieuw_items: list, drempel: float = 15.0):
                 if idx in matched_nieuw:
                     continue
                 nieuw = nieuw_items[idx]
+                # Voorkom dat een oppervlaktewaarde (5.11) matcht met een
+                # kamerreferentienummer (6) in de nieuwe tekening
+                if _RE_OPP_WAARDE.match(oud["tekst"]) and _RE_REFERENTIENR.match(nieuw["tekst"]):
+                    continue
+                if _RE_REFERENTIENR.match(oud["tekst"]) and _RE_OPP_WAARDE.match(nieuw["tekst"]):
+                    continue
                 d = _afstand(oud["pos"], nieuw["pos"])
                 if d < beste_d and d < drempel:
                     beste = nieuw
