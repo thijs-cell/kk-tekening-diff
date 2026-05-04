@@ -11,6 +11,8 @@ from __future__ import annotations
 import re
 from typing import Callable
 
+import fitz
+
 
 # ---------------------------------------------------------------------------
 # Hulpfuncties
@@ -337,3 +339,136 @@ def vind_legenda(page, orientatie: dict) -> dict:
             mapping[item["rgb"]] = item["label"]
 
     return mapping
+
+
+# ---------------------------------------------------------------------------
+# Functie 4: wandvergelijking
+# ---------------------------------------------------------------------------
+
+_MATCH_TOLERANTIE_PT = 10   # display-pt — drempel voor "zelfde pad"
+_MATCH_GRID = 5             # pt — rastercellgrootte voor snelle lookup
+
+
+def vergelijk_wanden(oud_path: str, nieuw_path: str, pagina: int = 0) -> list[dict]:
+    """
+    Vergelijkt wandpaden tussen twee revisies van dezelfde tekening-pagina.
+
+    1. Detecteert oriëntatie en legenda op beide pagina's.
+    2. Filtert dikke gekleurde paden (width >= 0.5pt) per wandtype-kleur.
+    3. Vergelijkt via grid-index (tolerantie _MATCH_TOLERANTIE_PT pt):
+       - Paden in NIEUW zonder match in OUD  → "nieuw"
+       - Paden in OUD zonder match in NIEUW  → "verdwenen"
+
+    Returns:
+        Lijst van dicts: type, wandtype, kleur, positie en bbox (display-coords).
+    """
+
+    def _open(pad, pnr):
+        doc = fitz.open(pad)
+        page = doc[pnr]
+        ori = detecteer_orientatie(page)
+        leg = vind_legenda(page, ori)
+        return doc, page, ori, leg
+
+    oud_doc, oud_page, oud_ori, oud_leg = _open(oud_path, pagina)
+    nieuw_doc, nieuw_page, nieuw_ori, nieuw_leg = _open(nieuw_path, pagina)
+
+    # Gecombineerde legenda: nieuw heeft prioriteit bij conflicten
+    legenda = {**oud_leg, **nieuw_leg}
+
+    if not legenda:
+        oud_doc.close()
+        nieuw_doc.close()
+        return []
+
+    kleuren = set(legenda.keys())
+
+    def _haal_paden(page, ori) -> list[dict]:
+        normalize = ori["normalize"]
+        paden = []
+        for d in page.get_drawings():
+            # Fill-gebaseerde wanden (bijv. 56 de Helling): gekleurde gevulde vlakken
+            fill = d.get("fill")
+            rep_kr: tuple | None = None
+            if fill is not None and not _is_neutraal(fill):
+                kr_f = _rnd(fill)
+                if kr_f in kleuren:
+                    rep_kr = kr_f
+
+            # Stroke-gebaseerde wanden (bijv. Muiden): gekleurde arceringlijnen
+            if rep_kr is None:
+                kleur = d.get("color")
+                breedte = d.get("width") or 0
+                if kleur is not None and breedte >= 0.5:
+                    kr_s = _rnd(kleur)
+                    if kr_s in kleuren:
+                        rep_kr = kr_s
+
+            if rep_kr is None:
+                continue
+
+            rect = d.get("rect")
+            if rect is None:
+                continue
+            if max(rect[2] - rect[0], rect[3] - rect[1]) < 2:
+                continue  # stip/punt
+            cx = (rect[0] + rect[2]) / 2
+            cy = (rect[1] + rect[3]) / 2
+            dx, dy = normalize(cx, cy)
+            c1 = normalize(rect[0], rect[1])
+            c2 = normalize(rect[2], rect[3])
+            paden.append({
+                "kr": rep_kr,
+                "dx": dx,
+                "dy": dy,
+                "bbox": [min(c1[0], c2[0]), min(c1[1], c2[1]),
+                         max(c1[0], c2[0]), max(c1[1], c2[1])],
+            })
+        return paden
+
+    oud_paden = _haal_paden(oud_page, oud_ori)
+    nieuw_paden = _haal_paden(nieuw_page, nieuw_ori)
+    oud_doc.close()
+    nieuw_doc.close()
+
+    def _bouw_index(paden) -> set:
+        g = _MATCH_GRID
+        return {(p["kr"], int(p["dx"] // g), int(p["dy"] // g)) for p in paden}
+
+    def _heeft_match(pad, idx) -> bool:
+        kr = pad["kr"]
+        gx = int(pad["dx"] // _MATCH_GRID)
+        gy = int(pad["dy"] // _MATCH_GRID)
+        cellen = _MATCH_TOLERANTIE_PT // _MATCH_GRID + 1
+        return any(
+            (kr, gx + ddx, gy + ddy) in idx
+            for ddx in range(-cellen, cellen + 1)
+            for ddy in range(-cellen, cellen + 1)
+        )
+
+    oud_idx = _bouw_index(oud_paden)
+    nieuw_idx = _bouw_index(nieuw_paden)
+
+    resultaten: list[dict] = []
+
+    for pad in nieuw_paden:
+        if not _heeft_match(pad, oud_idx):
+            resultaten.append({
+                "type": "nieuw",
+                "wandtype": legenda[pad["kr"]],
+                "kleur": pad["kr"],
+                "positie": [round(pad["dx"], 1), round(pad["dy"], 1)],
+                "bbox": [round(v, 1) for v in pad["bbox"]],
+            })
+
+    for pad in oud_paden:
+        if not _heeft_match(pad, nieuw_idx):
+            resultaten.append({
+                "type": "verdwenen",
+                "wandtype": legenda[pad["kr"]],
+                "kleur": pad["kr"],
+                "positie": [round(pad["dx"], 1), round(pad["dy"], 1)],
+                "bbox": [round(v, 1) for v in pad["bbox"]],
+            })
+
+    return resultaten
