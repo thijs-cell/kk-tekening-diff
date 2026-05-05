@@ -1148,6 +1148,225 @@ def _dedup_wand_items(items: list, drempel: float = 30.0) -> list:
 
 
 # ---------------------------------------------------------------------------
+# Wanden profiel — stap 6
+# ---------------------------------------------------------------------------
+
+def _collect_wanden_profiel(oud_path: str, nieuw_path: str, pagina: int,
+                             pw: float, ph: float,
+                             layout: "PageLayout | None") -> tuple:
+    """Detecteert wandwijzigingen via tekening_profiel.vergelijk_wanden.
+
+    Converteert display-coördinaten naar raw PDF-coördinaten voor overlay.
+    Returns: (nieuw_items, verdwenen_items, materiaalwissel_items, rij_items)
+    Elk item heeft {"rect": fitz.Rect, "beschrijving": str}.
+    """
+    import math as _math
+    from .tekening_profiel import vergelijk_wanden, detecteer_orientatie
+
+    CLUSTER_DIST = 100.0
+    MATERIAALWISSEL_DIST = 50.0
+    RIJ_MIN = 3
+    RIJ_SPAN = 300.0
+    RIJ_Y_TOL = 30.0
+    R = 8.0
+
+    if not oud_path or not nieuw_path:
+        return [], [], [], []
+
+    try:
+        resultaten = vergelijk_wanden(oud_path, nieuw_path, pagina)
+    except Exception as e:
+        logger.warning(f"vergelijk_wanden mislukt op pagina {pagina}: {e}")
+        return [], [], [], []
+
+    if not resultaten:
+        return [], [], [], []
+
+    try:
+        _doc = fitz.open(nieuw_path)
+        _ori = detecteer_orientatie(_doc[pagina])
+        _doc.close()
+        rotation = _ori["rotation"]
+        dw = _ori["display_width"]
+        dh = _ori["display_height"]
+    except Exception:
+        rotation, dw, dh = 0, pw, ph
+
+    def _to_raw(dx: float, dy: float) -> tuple:
+        if rotation == 90:
+            return (dy, dw - dx)
+        if rotation == 270:
+            return (dh - dy, dx)
+        if rotation == 180:
+            return (dw - dx, dh - dy)
+        return (dx, dy)
+
+    def _make_rect(rx: float, ry: float, r: float = R) -> fitz.Rect:
+        return fitz.Rect(rx - r, ry - r, rx + r, ry + r)
+
+    def _exclude(dx: float, dy: float) -> bool:
+        if layout is not None:
+            return layout.is_excluded((dx, dy))
+        return dx > pw * 0.88 or dy < ph * 0.05
+
+    resultaten = [r for r in resultaten if not _exclude(*r["positie"])]
+    if not resultaten:
+        return [], [], [], []
+
+    def _cluster_groepen(items: list) -> list:
+        gebruikt = set()
+        clusters = []
+        for i, item in enumerate(items):
+            if i in gebruikt:
+                continue
+            grp = [i]
+            gebruik_set = {i}
+            queue = [i]
+            while queue:
+                seed_idx = queue.pop()
+                seed = items[seed_idx]
+                for j, kand in enumerate(items):
+                    if j in gebruik_set:
+                        continue
+                    if seed["wandtype"] != kand["wandtype"]:
+                        continue
+                    if _math.hypot(
+                        seed["positie"][0] - kand["positie"][0],
+                        seed["positie"][1] - kand["positie"][1],
+                    ) < CLUSTER_DIST:
+                        gebruik_set.add(j)
+                        grp.append(j)
+                        queue.append(j)
+            gebruikt |= gebruik_set
+            gx = sum(items[k]["positie"][0] for k in grp) / len(grp)
+            gy = sum(items[k]["positie"][1] for k in grp) / len(grp)
+            clusters.append({
+                "type": item["type"],
+                "wandtype": item["wandtype"],
+                "positie": [gx, gy],
+                "x_min": min(items[k]["positie"][0] for k in grp),
+                "x_max": max(items[k]["positie"][0] for k in grp),
+                "y_min": min(items[k]["positie"][1] for k in grp),
+                "y_max": max(items[k]["positie"][1] for k in grp),
+            })
+        return clusters
+
+    nieuw_raw = [r for r in resultaten if r["type"] == "nieuw"]
+    verdwenen_raw = [r for r in resultaten if r["type"] == "verdwenen"]
+    nieuw_cl = _cluster_groepen(nieuw_raw)
+    verdwenen_cl = _cluster_groepen(verdwenen_raw)
+
+    # Materiaalwissels: verdwenen + nieuw binnen 50pt, ander wandtype
+    materiaalwissel_items: list = []
+    nieuw_gebruikt: set = set()
+    verdwenen_gebruikt: set = set()
+
+    for vi, vc in enumerate(verdwenen_cl):
+        for ni, nc in enumerate(nieuw_cl):
+            if ni in nieuw_gebruikt:
+                continue
+            if vc["wandtype"] == nc["wandtype"]:
+                continue
+            if _math.hypot(
+                vc["positie"][0] - nc["positie"][0],
+                vc["positie"][1] - nc["positie"][1],
+            ) < MATERIAALWISSEL_DIST:
+                mx = (vc["positie"][0] + nc["positie"][0]) / 2
+                my = (vc["positie"][1] + nc["positie"][1]) / 2
+                rx, ry = _to_raw(mx, my)
+                materiaalwissel_items.append({
+                    "rect": _make_rect(rx, ry),
+                    "beschrijving": f"Was: {vc['wandtype']} → Nu: {nc['wandtype']}",
+                })
+                nieuw_gebruikt.add(ni)
+                verdwenen_gebruikt.add(vi)
+                break
+
+    # Rij-detectie: 3+ clusters van hetzelfde wandtype op vrijwel dezelfde display_y
+    def _vind_rijen(clusters: list, gebruikt: set) -> tuple:
+        per_type: dict = {}
+        for i, c in enumerate(clusters):
+            if i not in gebruikt:
+                per_type.setdefault(c["wandtype"], []).append((i, c))
+
+        rij_specs: list = []
+        rij_idx: set = set()
+
+        for wandtype, groep in per_type.items():
+            gesorteerd = sorted(groep, key=lambda t: t[1]["positie"][1])
+            n = len(gesorteerd)
+            i = 0
+            while i < n:
+                j = i + 1
+                while j < n:
+                    ys = [gesorteerd[k][1]["positie"][1] for k in range(i, j + 1)]
+                    if max(ys) - min(ys) < RIJ_Y_TOL:
+                        j += 1
+                    else:
+                        break
+                window = gesorteerd[i:j]
+                if len(window) >= RIJ_MIN:
+                    xs = [c["positie"][0] for _, c in window]
+                    if max(xs) - min(xs) >= RIJ_SPAN:
+                        cy_d = sum(c["positie"][1] for _, c in window) / len(window)
+                        rij_specs.append({
+                            "wandtype": wandtype,
+                            "cy_d": cy_d,
+                            "x_min_d": min(xs),
+                            "x_max_d": max(xs),
+                        })
+                        for idx, _ in window:
+                            rij_idx.add(idx)
+                        i = j
+                        continue
+                i += 1
+        return rij_specs, rij_idx
+
+    nieuw_rij_specs, nieuw_rij_idx = _vind_rijen(nieuw_cl, nieuw_gebruikt)
+    verdwenen_rij_specs, verdwenen_rij_idx = _vind_rijen(verdwenen_cl, verdwenen_gebruikt)
+    nieuw_gebruikt |= nieuw_rij_idx
+    verdwenen_gebruikt |= verdwenen_rij_idx
+
+    rij_items: list = []
+    for spec in nieuw_rij_specs + verdwenen_rij_specs:
+        cy_d = spec["cy_d"]
+        x_min_d = spec["x_min_d"]
+        x_max_d = spec["x_max_d"]
+        if rotation == 90:
+            rect = fitz.Rect(cy_d - 4, dw - x_max_d, cy_d + 4, dw - x_min_d)
+        elif rotation == 270:
+            rect = fitz.Rect(dh - cy_d - 4, x_min_d, dh - cy_d + 4, x_max_d)
+        else:
+            rect = fitz.Rect(x_min_d, cy_d - 4, x_max_d, cy_d + 4)
+        rij_items.append({
+            "rect": rect,
+            "beschrijving": f"Nieuw: {spec['wandtype']} (rij)",
+        })
+
+    nieuw_items: list = []
+    for i, nc in enumerate(nieuw_cl):
+        if i in nieuw_gebruikt:
+            continue
+        rx, ry = _to_raw(nc["positie"][0], nc["positie"][1])
+        nieuw_items.append({
+            "rect": _make_rect(rx, ry),
+            "beschrijving": f"Nieuw: {nc['wandtype']}",
+        })
+
+    verdwenen_items: list = []
+    for i, vc in enumerate(verdwenen_cl):
+        if i in verdwenen_gebruikt:
+            continue
+        rx, ry = _to_raw(vc["positie"][0], vc["positie"][1])
+        verdwenen_items.append({
+            "rect": _make_rect(rx, ry),
+            "beschrijving": f"Verdwenen: {vc['wandtype']}",
+        })
+
+    return nieuw_items, verdwenen_items, materiaalwissel_items, rij_items
+
+
+# ---------------------------------------------------------------------------
 # Tekening pagina bouwen
 # ---------------------------------------------------------------------------
 
@@ -1164,18 +1383,23 @@ def _bouw_tekening_pagina(doc, clean_path: str, diff_result: dict,
 
     _teken_titel_balk(page, f"WIJZIGINGEN \u2014 {naam}")
 
-    # Layout ophalen uit diff_result (auto-gedetecteerd)
     layout = diff_result.get("_layout_obj")
-
-    # Alle tekst-items voor locatie-context
     alle_tekst = diff_result.get("nieuw_tekst_items", [])
 
-    # Verzamel de 4 categorieën
+    # Tekst-categorieën
     maat_items, maat_rv = _collect_maat(diff_result, pw, ph, alle_tekst, layout)
     nieuwe_maat_items, nieuwe_maat_rv = _collect_nieuwe_maten(diff_result, pw, ph, alle_tekst, layout)
     opp_items, opp_rv = _collect_oppervlakte(diff_result, pw, ph, alle_tekst, layout)
     ruimte_items, ruimte_rv = _collect_ruimtenaam(diff_result, pw, ph, layout)
     total_renvooi = maat_rv + nieuwe_maat_rv + opp_rv + ruimte_rv
+
+    # Wandwijzigingen
+    wand_nieuw, wand_verdwenen, wand_materiaal, wand_rijen = _collect_wanden_profiel(
+        oud_path or "", nieuw_path or "", pagina, pw, ph, layout,
+    )
+    wand_nieuw = _dedup_wand_items(_filter_wanden_bij_maat(wand_nieuw, maat_items))
+    wand_verdwenen = _dedup_wand_items(wand_verdwenen)
+    wand_materiaal = _dedup_wand_items(wand_materiaal)
 
     # Teken per laag met doorlopende nummering
     nr = 1
@@ -1183,12 +1407,20 @@ def _bouw_tekening_pagina(doc, clean_path: str, diff_result: dict,
     nr = _teken_laag_vakjes(page, nieuwe_maat_items, PAARS, nr)
     nr = _teken_laag_vakjes(page, opp_items, GROEN, nr)
     nr = _teken_laag_vakjes(page, ruimte_items, BLAUW, nr)
+    nr = _teken_laag_cirkels(page, wand_nieuw, PAARS, nr)
+    nr = _teken_laag_cirkels(page, wand_verdwenen, ROOD, nr, doorstreep=True)
+    nr = _teken_laag_cirkels(page, wand_materiaal, PAARS, nr)
+    nr = _teken_laag_vakjes(page, wand_rijen, PAARS, nr)
+
+    alle_wand = wand_nieuw + wand_verdwenen + wand_materiaal + wand_rijen
 
     _teken_legenda(page, [
         (ORANJE, "Maatwijziging", len(maat_items), "rect"),
         (PAARS, "Nieuwe maat toegevoegd", len(nieuwe_maat_items), "rect"),
         (GROEN, "Oppervlaktewijziging", len(opp_items), "rect"),
         (BLAUW, "Ruimtenaamwijziging", len(ruimte_items), "rect"),
+        (PAARS, "Nieuwe wand", len(wand_nieuw) + len(wand_rijen), "cirkel"),
+        (ROOD, "Verdwenen wand", len(wand_verdwenen), "cirkel"),
     ])
 
     secties = {
@@ -1196,6 +1428,7 @@ def _bouw_tekening_pagina(doc, clean_path: str, diff_result: dict,
         "nieuwe_maat": nieuwe_maat_items,
         "oppervlakte": opp_items,
         "ruimtenaam": ruimte_items,
+        "wanden": alle_wand,
     }
     totaal = sum(len(v) for v in secties.values())
 
@@ -1211,6 +1444,7 @@ RAPPORT_SECTIES = [
     ("nieuwe_maat", "Nieuwe maat toegevoegd", PAARS),
     ("oppervlakte", "Oppervlaktewijzigingen", GROEN),
     ("ruimtenaam", "Ruimtenaamwijzigingen", BLAUW),
+    ("wanden", "Wandwijzigingen", PAARS),
 ]
 
 
@@ -1336,7 +1570,8 @@ def generate_overlay_pdf(
 
         secties, totaal, renvooi = _bouw_tekening_pagina(
             doc, nieuw_clean, diff_result, pagina, nieuw_naam,
-            oud_path=oud_pdf_path, nieuw_path=nieuw_pdf_path)
+            oud_path=oud_pdf_path, nieuw_path=nieuw_pdf_path,
+        )
 
         _bouw_samenvatting(doc, diff_result, oud_pdf_path, nieuw_pdf_path,
                            secties, totaal, renvooi)
@@ -1391,7 +1626,8 @@ def generate_multi_page_overlay(
 
             secties, totaal, renvooi = _bouw_tekening_pagina(
                 doc, nieuw_clean, diff_result, pag_idx, pag_label,
-                oud_path=oud_pdf_path, nieuw_path=nieuw_pdf_path)
+                oud_path=oud_pdf_path, nieuw_path=nieuw_pdf_path,
+            )
 
             _bouw_samenvatting(
                 doc, diff_result, oud_pdf_path, nieuw_pdf_path,
@@ -1464,7 +1700,8 @@ def generate_split_rapport(
             doc_temp = fitz.open()
             secties, totaal, renvooi = _bouw_tekening_pagina(
                 doc_temp, nieuw_clean, diff_result, pag_idx, pag_label,
-                oud_path=oud_pdf_path, nieuw_path=nieuw_pdf_path)
+                oud_path=oud_pdf_path, nieuw_path=nieuw_pdf_path,
+            )
             doc_tekeningen.insert_pdf(doc_temp)
             doc_temp.close()
 

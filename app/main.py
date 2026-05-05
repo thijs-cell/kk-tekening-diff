@@ -22,6 +22,7 @@ from .config import DiffConfig
 from .diff_engine import run_diff
 from .interpreter import interpreteer_diff
 from .overlay import generate_overlay_pdf, generate_multi_page_overlay, generate_split_rapport
+from .preflight import controleer_pdfs
 
 logging.basicConfig(
     level=logging.INFO,
@@ -272,6 +273,9 @@ async def diff(
     oud_bytes = await oud_pdf.read()
     nieuw_bytes = await nieuw_pdf.read()
 
+    controleer_pdfs(oud_bytes, nieuw_bytes,
+                    oud_pdf.filename or "oud.pdf", nieuw_pdf.filename or "nieuw.pdf")
+
     # Validatie
     for label, content, filename in [
         ("oud_pdf", oud_bytes, oud_pdf.filename),
@@ -324,6 +328,7 @@ async def diff(
         # Interpreteer de wijzigingen naar leesbaar rapport
         alle_tekst = result.get("nieuw_tekst_items", [])
         pw = result.get("meta", {}).get("pagina_breedte", 0)
+
         result["interpretatie"] = interpreteer_diff(result, alle_tekst, pw)
 
         totalen = result.get("totalen", {})
@@ -389,6 +394,9 @@ async def overlay(
     oud_bytes = await oud_pdf.read()
     nieuw_bytes = await nieuw_pdf.read()
 
+    controleer_pdfs(oud_bytes, nieuw_bytes,
+                    oud_pdf.filename or "oud.pdf", nieuw_pdf.filename or "nieuw.pdf")
+
     result = _validate_and_save_pdfs(
         oud_bytes, nieuw_bytes,
         oud_pdf.filename or "oud.pdf", nieuw_pdf.filename or "nieuw.pdf",
@@ -443,6 +451,9 @@ async def rapport(
     oud_bytes = await oud_pdf.read()
     nieuw_bytes = await nieuw_pdf.read()
 
+    controleer_pdfs(oud_bytes, nieuw_bytes,
+                    oud_pdf.filename or "oud.pdf", nieuw_pdf.filename or "nieuw.pdf")
+
     result = _validate_and_save_pdfs(
         oud_bytes, nieuw_bytes,
         oud_pdf.filename or "oud.pdf", nieuw_pdf.filename or "nieuw.pdf",
@@ -494,6 +505,9 @@ async def rapport_volledig(
     """Vergelijk ALLE pagina's en genereer een compleet rapport PDF."""
     oud_bytes = await oud_pdf.read()
     nieuw_bytes = await nieuw_pdf.read()
+
+    controleer_pdfs(oud_bytes, nieuw_bytes,
+                    oud_pdf.filename or "oud.pdf", nieuw_pdf.filename or "nieuw.pdf")
 
     result = _validate_and_save_pdfs(
         oud_bytes, nieuw_bytes,

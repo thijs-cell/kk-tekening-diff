@@ -8,7 +8,11 @@ kleur of schaal.
 
 from __future__ import annotations
 
+import base64
+import json
+import os
 import re
+import time
 from typing import Callable
 
 import fitz
@@ -175,7 +179,7 @@ _WANDTYPE_TERMEN = re.compile(
     r"\b(kalkzandsteen|gibo|isolatie|metselwerk|beton|prefab|hsb|sandwich|pir|"
     r"rhombus|hardschuim|achterwand|voorzetwand|mato|stuc|biobased|gyproc|cellenbeton|"
     r"ytong|poriso|siporex|damwand|glaswand|systeemwand|scheidingswand|binnenwand|"
-    r"buitenwand|draagwand|spouwwand|brandwand|staalstud)\b",
+    r"buitenwand|draagwand|spouwwand|brandwand|staalstud|wand)\b",
     re.I,
 )
 _LEGENDA_RADIUS = 700       # pt — zoekzone rond de legenda-titel
@@ -339,6 +343,329 @@ def vind_legenda(page, orientatie: dict) -> dict:
             mapping[item["rgb"]] = item["label"]
 
     return mapping
+
+
+# ---------------------------------------------------------------------------
+# Functie 3b: Vision-gebaseerde legenda (fallback)
+# ---------------------------------------------------------------------------
+
+_KLEUR_VECTOREN = {
+    "rood":       (0.85, 0.10, 0.10),
+    "groen":      (0.10, 0.75, 0.10),
+    "blauw":      (0.10, 0.10, 0.85),
+    "geel":       (0.90, 0.90, 0.05),
+    "oranje":     (0.90, 0.45, 0.05),
+    "paars":      (0.55, 0.05, 0.75),
+    "lila":       (0.65, 0.25, 0.80),
+    "violet":     (0.55, 0.05, 0.75),
+    "teal":       (0.05, 0.65, 0.65),
+    "cyaan":      (0.05, 0.75, 0.80),
+    "turquoise":  (0.05, 0.70, 0.65),
+    "roze":       (0.90, 0.40, 0.65),
+    "bruin":      (0.50, 0.25, 0.05),
+    "oker":       (0.75, 0.55, 0.05),
+    "magenta":    (0.80, 0.05, 0.60),
+    "maroon":     (0.50, 0.15, 0.15),
+    "pink":       (0.90, 0.40, 0.65),
+    "purple":     (0.55, 0.05, 0.75),
+    "green":      (0.10, 0.75, 0.10),
+    "blue":       (0.10, 0.10, 0.85),
+    "red":        (0.85, 0.10, 0.10),
+    "orange":     (0.90, 0.45, 0.05),
+    "yellow":     (0.90, 0.90, 0.05),
+    "brown":      (0.50, 0.25, 0.05),
+}
+
+_VISION_PROMPT = (
+    "Dit is de legenda/renvooi van een bouwtekening voor K&K Afbouw.\n"
+    "K&K Afbouw plaatst gibowanden, voorzetwanden en plafonds.\n\n"
+    "Geef ALLE wandtypes die je in deze legenda ziet.\n"
+    "Per wandtype geef:\n"
+    "- naam (exact zoals het in de legenda staat)\n"
+    "- kleur beschrijving\n"
+    "- arcering patroon (enkele diagonaal, kruisarcering, horizontaal, "
+    "verticaal, zigzag, gevuld, geen)\n"
+    "- relevant_voor_kk: true als het een wandtype is dat K&K plaatst "
+    "of waar K&K rekening mee moet houden\n\n"
+    "Relevante wandtypes: gibo, voorzetwand, isolatie, kalkzandsteen, "
+    "sandwichpaneel, beton, prefab, hsb-wand, PIR+OSB, hardschuimisolatie, "
+    "achterwand toilet, Rhombus/Mato gevelafwerking, binnenwand, scheidingswand\n"
+    "NIET relevant: brandblussers, vluchtwegaanduidingen, peilmaten, "
+    "deursymbolen, overstroomroosters\n\n"
+    "Retourneer ALLEEN een JSON array, geen andere tekst:\n"
+    '[{"naam": "gibo binnenwand 70mm", "kleur": "blauw-lila", '
+    '"arcering": "verticaal", "relevant_voor_kk": true}]'
+)
+
+
+def _display_naar_raw_clip(
+    dx0: float, dy0: float, dx1: float, dy1: float,
+    rotation: int, display_width: float, display_height: float,
+) -> fitz.Rect:
+    """Converteer display-crop (display-coords) naar raw PDF Rect voor get_pixmap."""
+    dw, dh = display_width, display_height
+    if rotation == 0:
+        return fitz.Rect(dx0, dy0, dx1, dy1)
+    elif rotation == 90:
+        # normalize: disp_x = dw - raw_y, disp_y = raw_x
+        # inverse:   raw_x = disp_y,       raw_y = dw - disp_x
+        return fitz.Rect(dy0, dw - dx1, dy1, dw - dx0)
+    elif rotation == 180:
+        # normalize: disp_x = dw - raw_x, disp_y = dh - raw_y
+        # inverse:   raw_x = dw - disp_x, raw_y = dh - disp_y
+        return fitz.Rect(dw - dx1, dh - dy1, dw - dx0, dh - dy0)
+    elif rotation == 270:
+        # normalize: disp_x = raw_y,       disp_y = dh - raw_x
+        # inverse:   raw_x = dh - disp_y,  raw_y = disp_x
+        return fitz.Rect(dh - dy1, dx0, dh - dy0, dx1)
+    else:
+        return fitz.Rect(dx0, dy0, dx1, dy1)
+
+
+def vind_legenda_vision(page, ori: dict, api_key: str | None = None) -> dict:
+    """
+    Vision-gebaseerde legenda-lezer als fallback voor vind_legenda.
+
+    Rendert een 600×800pt crop van de legenda-zone en vraagt Claude Vision
+    om alle wandtypes te identificeren. Matcht kleur-beschrijvingen op de
+    RGB-waarden uit de vector-data.
+
+    Returns:
+        dict: rgb_tuple -> {"naam": str, "relevant_voor_kk": bool, "arcering": str}
+        Lege dict als Vision niet beschikbaar is of niets vindt.
+    """
+    if api_key is None:
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        return {}
+
+    normalize: Callable = ori["normalize"]
+    rotation = ori["rotation"]
+    dw = ori["display_width"]
+    dh = ori["display_height"]
+
+    # Stap 1: Vind legenda-titel posities (display coords)
+    titel_posities = _vind_legenda_titels(page, normalize)
+    if not titel_posities:
+        return {}
+
+    # Stap 2: Crop-zone — bepaal of de legenda links of rechts van de titel staat.
+    #   Standaard: 600×800pt naar rechts/beneden (titel linksboven in legenda).
+    #   Flip naar links als de titel dicht bij de rechter paginakant staat — de legenda
+    #   strekt zich dan naar links uit (zoals Muiden D2.1: titel op x=3509, pagina 3827pt).
+    #   Bekende beperking: bij tekeningen met meerdere afzonderlijke legendas op dezelfde
+    #   pagina kan de gekozen crop een verkeerde legenda includeren. Niet opgelost vandaag.
+    tx, ty = titel_posities[0]
+    _STANDARD_W = 600
+    _standard_x1 = min(dw, tx - 50 + _STANDARD_W)
+    _clipped_w = _standard_x1 - max(0.0, tx - 50)
+
+    if _clipped_w < _STANDARD_W * 0.7:
+        # Titel staat dicht bij de rechter paginakant — legenda strekt zich naar links.
+        # Gebruik 600pt hoogte om de wandtype-sectie te tonen zonder de deur/kozijn-tabellen
+        # die lager op de pagina staan en Vision afleiden (Muiden D2.1 patroon).
+        crop_x1 = min(dw, tx + 200)
+        crop_x0 = max(0.0, crop_x1 - 1000)
+        crop_y0 = max(0.0, min(t[1] for t in titel_posities) - 30)
+        crop_y1 = min(dh, crop_y0 + 600)
+    else:
+        crop_x0 = max(0.0, tx - 50)
+        crop_y0 = max(0.0, ty - 30)
+        crop_x1 = _standard_x1
+        crop_y1 = min(dh, crop_y0 + 800)
+
+    # Stap 3: Clip aan paginagrens.
+    #   get_pixmap(clip=...) verwacht display-coords (page.rect-ruimte) — NIET de raw
+    #   pre-rotatie PDF-coords die _display_naar_raw_clip zou teruggeven.
+    raw_clip = fitz.Rect(crop_x0, crop_y0, crop_x1, crop_y1) & page.rect
+
+    if raw_clip.is_empty:
+        return {}
+
+    # Stap 4: Render als PNG (200 DPI)
+    mat = fitz.Matrix(200 / 72, 200 / 72)
+    pix = page.get_pixmap(matrix=mat, clip=raw_clip, colorspace=fitz.csRGB)
+    png_bytes = pix.tobytes("png")
+
+    # Stap 5: Stuur naar Claude Vision API
+    try:
+        import anthropic
+    except ImportError:
+        print("[Vision] anthropic package niet geïnstalleerd — pip install anthropic")
+        return {}
+
+    client = anthropic.Anthropic(api_key=api_key)
+    b64_image = base64.b64encode(png_bytes).decode()
+
+    try:
+        _t0 = time.time()
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1024,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": b64_image,
+                        },
+                    },
+                    {"type": "text", "text": _VISION_PROMPT},
+                ],
+            }],
+        )
+        _t1 = time.time()
+        usage = response.usage
+        # Sonnet 4.6 prijzen mei 2026: $3/MTok input, $15/MTok output
+        _cost = (usage.input_tokens * 3 + usage.output_tokens * 15) / 1_000_000
+        print(
+            f"[Vision] {usage.input_tokens} in + {usage.output_tokens} out tokens"
+            f" = ${_cost:.4f}  ({_t1 - _t0:.1f}s)"
+        )
+        vision_tekst = response.content[0].text.strip()
+    except Exception as e:
+        print(f"[Vision] API fout: {e}")
+        return {}
+
+    # Stap 6: Parse JSON response
+    try:
+        start = vision_tekst.find("[")
+        end = vision_tekst.rfind("]") + 1
+        if start < 0 or end <= start:
+            print(f"[Vision] Geen JSON array in response: {vision_tekst[:200]}")
+            return {}
+        vision_items: list[dict] = json.loads(vision_tekst[start:end])
+    except json.JSONDecodeError as e:
+        print(f"[Vision] JSON parse fout: {e} — response: {vision_tekst[:200]}")
+        return {}
+
+    # Stap 7: Verzamel niet-neutrale kleuren uit de legenda-zone (vector data)
+    zone_kleuren: list[tuple] = []
+    for d in page.get_drawings():
+        rect = d.get("rect")
+        if rect is None:
+            continue
+        area = (rect[2] - rect[0]) * (rect[3] - rect[1])
+        if area > _MAX_SWATCH_AREA:
+            continue
+
+        rep_kleur: tuple | None = None
+        fill = d.get("fill")
+        if fill is not None and not _is_neutraal(fill):
+            rep_kleur = _rnd(fill)
+        if rep_kleur is None:
+            kleur = d.get("color")
+            breedte = d.get("width") or 0
+            if kleur is not None and not _is_neutraal(kleur) and breedte > 0.15:
+                rep_kleur = _rnd(kleur)
+        if rep_kleur is None:
+            continue
+
+        cx = (rect[0] + rect[2]) / 2
+        cy = (rect[1] + rect[3]) / 2
+        dx, dy = normalize(cx, cy)
+        if crop_x0 <= dx <= crop_x1 and crop_y0 <= dy <= crop_y1:
+            if rep_kleur not in zone_kleuren:
+                zone_kleuren.append(rep_kleur)
+
+    # Stap 8: Match Vision kleur-beschrijving → dichtstbijzijnde RGB
+    def _match_kleur(desc: str) -> tuple | None:
+        desc_l = desc.lower()
+        doel = [0.0, 0.0, 0.0]
+        gewicht = 0.0
+        for naam, vec in _KLEUR_VECTOREN.items():
+            if naam in desc_l:
+                doel = [doel[i] + vec[i] for i in range(3)]
+                gewicht += 1.0
+        if gewicht == 0 or not zone_kleuren:
+            return None
+        doel_t = tuple(v / gewicht for v in doel)
+        return min(zone_kleuren,
+                   key=lambda kr: sum((a - b) ** 2 for a, b in zip(kr, doel_t)))
+
+    # Stap 9: Bouw resultaat dict
+    resultaat: dict = {}
+    gebruikt: set = set()
+    _fallback_idx = 0
+    for item in vision_items:
+        naam = item.get("naam", "").strip()
+        if not naam:
+            continue
+        rgb = _match_kleur(item.get("kleur", ""))
+        if rgb is None:
+            # Kleur niet herkenbaar (bijv. "zwart/wit") → index-fallback als 3-tuple.
+            # Veiligheid: afstand tot elke echte RGB >= sqrt(2) ~= 1.41, ver boven
+            # huidige _lookup_wandtype drempel 0.15. Als die drempel ooit > 1.4 wordt,
+            # breekt deze aanname.
+            key = (-1, _fallback_idx, -1)
+            _fallback_idx += 1
+        elif rgb in gebruikt:
+            continue
+        else:
+            key = rgb
+        resultaat[key] = {
+            "naam": naam,
+            "relevant_voor_kk": bool(item.get("relevant_voor_kk", False)),
+            "arcering": item.get("arcering", "geen"),
+        }
+        gebruikt.add(key)
+
+    return resultaat
+
+
+def vind_legenda_combined(page, ori: dict, api_key: str | None = None) -> dict:
+    """
+    Combineert vector-legenda (vind_legenda) met Vision-legenda als fallback.
+
+    Selectielogica:
+    - Geen api_key: altijd vector.
+    - Vector < 2 wandtypes: Vision.
+    - Vector >= 2 maar > 60% heeft hetzelfde label (uniform/weinig discriminerend): Vision.
+    - Vector >= 2 en voldoende variatie: vector.
+
+    Returns:
+        dict: rgb_tuple -> str (wandtype-naam) — zelfde formaat als vind_legenda.
+    """
+    if api_key is None:
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+
+    vector = vind_legenda(page, ori)
+    print(f"[Legenda] Vector: {len(vector)} wandtypes — {list(vector.values())}")
+
+    if not api_key:
+        if len(vector) >= 2:
+            print(f"[Legenda] Gecombineerd: vector-primair ({len(vector)} wandtypes, geen API key)")
+        return vector
+
+    # Kwaliteitscheck: meer dan 60% van de labels identiek → vector is weinig discriminerend.
+    _vector_uniform = False
+    if len(vector) >= 2:
+        _labels = list(vector.values())
+        _meest = max(set(_labels), key=_labels.count)
+        _aandeel = _labels.count(_meest) / len(_labels)
+        if _aandeel > 0.60:
+            _vector_uniform = True
+            print(
+                f"[Legenda] Vector uniform: '{_meest}' = "
+                f"{_labels.count(_meest)}/{len(_labels)} ({_aandeel:.0%}) — Vision-fallback"
+            )
+
+    if len(vector) >= 2 and not _vector_uniform:
+        print(f"[Legenda] Gecombineerd: vector-primair ({len(vector)} wandtypes, Vision overgeslagen)")
+        return vector
+
+    # Vision als fallback (vector < 2 of uniform)
+    vision_raw = vind_legenda_vision(page, ori, api_key)
+    vision = {rgb: info["naam"] for rgb, info in vision_raw.items()}
+    print(f"[Legenda] Vision: {len(vision)} wandtypes — {list(vision.values())}")
+    if _vector_uniform:
+        print("[Legenda] Gecombineerd: Vision-primair (vector uniform — te weinig variatie)")
+    else:
+        print("[Legenda] Gecombineerd: Vision-primair (vector < 2 resultaten)")
+    return vision
 
 
 # ---------------------------------------------------------------------------
