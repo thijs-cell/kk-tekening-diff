@@ -2,7 +2,7 @@
 Interpreter voor K&K diff resultaten.
 
 Vertaalt ruwe diff-data naar een gestructureerd, leesbaar rapport
-gericht op wat Richard nodig heeft:
+gericht op wat Dicky nodig heeft:
   1. Ruimtenaam wijzigingen (andere eisen mogelijk)
   2. Maatvoering binnenwanden
   3. Wanddikte wijzigingen (70/100mm)

@@ -1,0 +1,79 @@
+{
+  "wandtypes": [
+    {
+      "naam": "kalkzandsteen 120mm",
+      "visuele_kenmerken": "Drie horizontale rechthoeken met verticale scheidingslijnen",
+      "categorie": "kalkzandsteen"
+    },
+    {
+      "naam": "kalkzandsteen 100mm",
+      "visuele_kenmerken": "Drie horizontale rechthoeken met verticale scheidingslijnen",
+      "categorie": "kalkzandsteen"
+    },
+    {
+      "naam": "Gibo100mm",
+      "visuele_kenmerken": "Rechthoeken met diagonale arcering",
+      "categorie": "gips"
+    },
+    {
+      "naam": "Gibo zwaar 70mm",
+      "visuele_kenmerken": "Rechthoeken met diagonale arcering",
+      "categorie": "gips"
+    },
+    {
+      "naam": "Gibo 70mm",
+      "visuele_kenmerken": "Rechthoeken met diagonale arcering en donkere vulling",
+      "categorie": "gips"
+    },
+    {
+      "naam": "hsb-wand",
+      "visuele_kenmerken": "Ruitpatroon met kruisarcering",
+      "categorie": "hsb"
+    },
+    {
+      "naam": "voorzetwand: isolatie + biobased plaat + gips",
+      "visuele_kenmerken": "Drie lagen met verschillende arceringen",
+      "categorie": "voorzetwand"
+    },
+    {
+      "naam": "isolatie+stuc",
+      "visuele_kenmerken": "Twee lagen met stippels en lijn",
+      "categorie": "sandwich"
+    },
+    {
+      "naam": "PIR+OSB",
+      "visuele_kenmerken": "Twee lagen met stippels",
+      "categorie": "sandwich"
+    },
+    {
+      "naam": "hardschuimisolatie",
+      "visuele_kenmerken": "Stippenpatroon",
+      "categorie": "isolatie"
+    },
+    {
+      "naam": "prefabbeton",
+      "visuele_kenmerken": "Driehoekspatroon met lichte vulling",
+      "categorie": "beton"
+    },
+    {
+      "naam": "beton",
+      "visuele_kenmerken": "Grijze vlakke rechthoek",
+      "categorie": "beton"
+    },
+    {
+      "naam": "Rhombus gevelafwerking",
+      "visuele_kenmerken": "Horizontale lijnen met dubbele rand",
+      "categorie": "gevelafwerking"
+    },
+    {
+      "naam": "Mato gevelafwerking",
+      "visuele_kenmerken": "Dikke zwarte horizontale lijn",
+      "categorie": "gevelafwerking"
+    },
+    {
+      "naam": "achterwand toilet",
+      "visuele_kenmerken": "Dubbele horizontale lijnen",
+      "categorie": "anders"
+    }
+  ]
+}

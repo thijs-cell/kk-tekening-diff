@@ -40,9 +40,9 @@ def _maak_sessie_token() -> str:
     return hashlib.sha256(combo.encode()).hexdigest()
 
 
-# Map waar feedback + PDFs worden opgeslagen (/tmp is altijd schrijfbaar)
-_feedback_dir = Path("/tmp/feedback-opslag")
-_feedback_dir.mkdir(exist_ok=True)
+# Map waar feedback + PDFs worden opgeslagen (cross-platform tmp)
+_feedback_dir = Path(tempfile.gettempdir()) / "feedback-opslag"
+_feedback_dir.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(
     title="K&K Tekening Diff",

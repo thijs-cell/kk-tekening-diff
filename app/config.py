@@ -36,3 +36,17 @@ class DiffConfig:
 
     # --- Lijn vergelijking ---
     lijn_width_verschil: float = 0.5
+
+    # --- wand_diff pipeline ---
+    use_new_wand_diff: bool = True            # False → oud vergelijk_wanden() pad
+    use_vision_pipeline: bool = False         # True → wand_diff_vision.py (experimental)
+    vision_per_segment_actief: bool = False   # True → Claude Vision per onbekend segment (v2)
+    wand_min_segment_lengte: float = 5.0      # pt — kleinste te detecteren segment
+    wand_centroid_max_afstand: float = 150.0  # pt — kostdrempel Hungarian verwerping
+    wand_kleur_tolerantie: float = 0.15       # RGB Euclidisch voor kleurmatch
+    wand_arcering_hoek_tol: float = 5.0       # graden — arceringhoek tolerantie (v2)
+    wand_arcering_spatie_tol: float = 2.0     # pt — arceringspatie tolerantie (v2)
+    wand_vision_confidence_min: float = 0.65  # min Vision confidence (v2)
+    wand_cluster_afstand: float = 80.0        # pt — clustering drempel
+    wand_oval_min_dim: float = 8.0            # pt — minimale ellipse-dimensie
+    wand_pre_cluster_afstand: float = 40.0   # pt — pre-match clustering (reduceert arcering-segmenten)

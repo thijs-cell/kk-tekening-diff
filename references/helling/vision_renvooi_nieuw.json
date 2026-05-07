@@ -1,0 +1,84 @@
+{
+  "wandtypes": [
+    {
+      "naam": "kalkzandsteen 120mm",
+      "visuele_kenmerken": "dubbele horizontale lijnen met verticale arcering",
+      "categorie": "kalkzandsteen"
+    },
+    {
+      "naam": "kalkzandsteen 100mm",
+      "visuele_kenmerken": "dubbele horizontale lijnen met verticale arcering",
+      "categorie": "kalkzandsteen"
+    },
+    {
+      "naam": "Gibo100mm",
+      "visuele_kenmerken": "dubbele horizontale lijnen",
+      "categorie": "gips"
+    },
+    {
+      "naam": "Gibo zwaar 70mm",
+      "visuele_kenmerken": "dubbele horizontale lijnen met dikker profiel",
+      "categorie": "gips"
+    },
+    {
+      "naam": "Gibo 70mm",
+      "visuele_kenmerken": "dubbele horizontale lijnen",
+      "categorie": "gips"
+    },
+    {
+      "naam": "hsb-wand",
+      "visuele_kenmerken": "gearceerde rechthoek met kruispatroon",
+      "categorie": "hsb"
+    },
+    {
+      "naam": "sandwichpaneel",
+      "visuele_kenmerken": "rechthoek met dichte stippenarcering",
+      "categorie": "sandwich"
+    },
+    {
+      "naam": "voorzetwand: isolatie + biobased plaat + gips",
+      "visuele_kenmerken": "gelaagde rechthoek met stippenarcering",
+      "categorie": "voorzetwand"
+    },
+    {
+      "naam": "isolatie+stuc",
+      "visuele_kenmerken": "rechthoek met groene stippenarcering",
+      "categorie": "isolatie"
+    },
+    {
+      "naam": "PIR+OSB",
+      "visuele_kenmerken": "rechthoek met zwarte stippenarcering",
+      "categorie": "isolatie"
+    },
+    {
+      "naam": "hardschuimisolatie",
+      "visuele_kenmerken": "rechthoek met dichte stippenarcering",
+      "categorie": "isolatie"
+    },
+    {
+      "naam": "prefabbeton",
+      "visuele_kenmerken": "rechthoek met diagonaal kruispatroon",
+      "categorie": "beton"
+    },
+    {
+      "naam": "beton",
+      "visuele_kenmerken": "grijze gevulde rechthoek",
+      "categorie": "beton"
+    },
+    {
+      "naam": "Rhombus gevelafwerking",
+      "visuele_kenmerken": "dubbele horizontale lijnen met verticale strepen",
+      "categorie": "gevelafwerking"
+    },
+    {
+      "naam": "Mato gevelafwerking",
+      "visuele_kenmerken": "dubbele horizontale lijnen",
+      "categorie": "gevelafwerking"
+    },
+    {
+      "naam": "achterwand toilet",
+      "visuele_kenmerken": "lege rechthoek",
+      "categorie": "anders"
+    }
+  ]
+}

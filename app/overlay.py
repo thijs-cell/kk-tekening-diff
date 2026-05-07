@@ -976,11 +976,11 @@ def _verschuif_cirkels(items: list, min_afstand: float = 20.0) -> list:
 
 
 def _teken_laag_cirkels(page, items: list, stijl: dict, nummer_start: int,
-                         doorstreep: bool = False) -> int:
-    """Teken cirkels (r=8, opacity=0.3) + labels voor wandwijzigingen.
+                         doorstreep: bool = False, gebruik_oval: bool = False) -> int:
+    """Teken cirkels of ovals + labels voor wandwijzigingen.
 
-    Anti-overlap: cirkels worden uit elkaar geschoven, labels worden
-    verticaal gestapeld als ze te dicht bij elkaar staan.
+    gebruik_oval=False (default): vaste cirkel r=8, anti-overlap verschuiving.
+    gebruik_oval=True: ellipse over de wand-bbox, geen verschuiving (wand blijft op locatie).
     Returns volgende nummer.
     """
     import math as _math
@@ -994,8 +994,9 @@ def _teken_laag_cirkels(page, items: list, stijl: dict, nummer_start: int,
     # Maak een kopie zodat origineel niet muteert
     items = [dict(it) for it in items]
 
-    # Anti-overlap cirkels
-    items = _verschuif_cirkels(items, min_afstand=20.0)
+    # Anti-overlap alleen bij vaste cirkels (niet bij ovals op wandlocatie)
+    if not gebruik_oval:
+        items = _verschuif_cirkels(items, min_afstand=20.0)
 
     # Bereken label-posities
     label_pos = []
@@ -1005,11 +1006,11 @@ def _teken_laag_cirkels(page, items: list, stijl: dict, nummer_start: int,
         cy = (r.y0 + r.y1) / 2
         beschr = item.get("beschrijving", "")
         label_w = len(beschr) * 4.2 + 6
-        # Links van cirkel als dicht bij rechterrand (renvooi)
-        if cx + RADIUS + label_w + 10 > pw * 0.84:
-            lx = cx - RADIUS - label_w - 4
+        rand_ref = (r.x1 + RADIUS) if not gebruik_oval else r.x1
+        if rand_ref + label_w + 10 > pw * 0.84:
+            lx = (r.x0 - label_w - 4) if gebruik_oval else (cx - RADIUS - label_w - 4)
         else:
-            lx = cx + RADIUS + 4
+            lx = (r.x1 + 4) if gebruik_oval else (cx + RADIUS + 4)
         ly = cy + 3
         label_pos.append([lx, ly])
 
@@ -1025,15 +1026,18 @@ def _teken_laag_cirkels(page, items: list, stijl: dict, nummer_start: int,
         cx = (r.x0 + r.x1) / 2
         cy = (r.y0 + r.y1) / 2
 
-        # Cirkel met opacity 0.3
+        # Vorm tekenen: oval (wand-bbox) of cirkel (vaste grootte)
         shape = page.new_shape()
-        shape.draw_circle(fitz.Point(cx, cy), RADIUS)
+        if gebruik_oval:
+            shape.draw_oval(r)
+        else:
+            shape.draw_circle(fitz.Point(cx, cy), RADIUS)
         shape.finish(color=stijl["color"], fill=stijl["fill"], fill_opacity=0.3, width=1.2)
         shape.commit()
 
-        # X door cirkel bij verwijderd
+        # X door vorm bij verwijderd
         if doorstreep:
-            off = RADIUS * 0.6
+            off = (min(r.x1 - r.x0, r.y1 - r.y0) / 2 * 0.6) if gebruik_oval else (RADIUS * 0.6)
             for p1, p2 in [
                 ((cx - off, cy - off), (cx + off, cy + off)),
                 ((cx - off, cy + off), (cx + off, cy - off)),
@@ -1043,13 +1047,14 @@ def _teken_laag_cirkels(page, items: list, stijl: dict, nummer_start: int,
                 s.finish(color=stijl["color"], width=1.5)
                 s.commit()
 
-        # Nummer in de cirkel
-        try:
-            label_nr = str(nr)
-            nx = cx - 3 if len(label_nr) == 1 else cx - 5
-            page.insert_text(fitz.Point(nx, cy + 3), label_nr, fontsize=6, color=stijl["color"])
-        except Exception:
-            pass
+        # Nummer in de vorm — alleen bij vaste cirkels (te klein bij ovals)
+        if not gebruik_oval:
+            try:
+                label_nr = str(nr)
+                nx = cx - 3 if len(label_nr) == 1 else cx - 5
+                page.insert_text(fitz.Point(nx, cy + 3), label_nr, fontsize=6, color=stijl["color"])
+            except Exception:
+                pass
 
         # Label met witte achtergrond en verbindingslijn
         lx, ly = label_pos[i]
@@ -1061,8 +1066,7 @@ def _teken_laag_cirkels(page, items: list, stijl: dict, nummer_start: int,
             s.draw_rect(bg)
             s.finish(color=None, fill=(1, 1, 1), fill_opacity=0.85, width=0)
             s.commit()
-            # Verbindingslijn cirkel -> label
-            connect_x = cx + RADIUS if lx > cx else cx - RADIUS
+            connect_x = r.x1 if (gebruik_oval and lx > cx) else (r.x0 if gebruik_oval else (cx + RADIUS if lx > cx else cx - RADIUS))
             s2 = page.new_shape()
             s2.draw_line(fitz.Point(connect_x, cy), fitz.Point(lx, ly - 2))
             s2.finish(color=stijl["color"], width=0.4)
@@ -1153,44 +1157,265 @@ def _dedup_wand_items(items: list, drempel: float = 30.0) -> list:
 
 def _collect_wanden_profiel(oud_path: str, nieuw_path: str, pagina: int,
                              pw: float, ph: float,
-                             layout: "PageLayout | None") -> tuple:
-    """Detecteert wandwijzigingen via tekening_profiel.vergelijk_wanden.
+                             layout: "PageLayout | None",
+                             api_key: str | None = None,
+                             cfg: "DiffConfig | None" = None) -> tuple:
+    """Detecteert wandwijzigingen en converteert naar overlay-items.
 
-    Converteert display-coördinaten naar raw PDF-coördinaten voor overlay.
     Returns: (nieuw_items, verdwenen_items, materiaalwissel_items, rij_items)
     Elk item heeft {"rect": fitz.Rect, "beschrijving": str}.
+
+    cfg.use_new_wand_diff=True (default): wand_diff pipeline (Hungarian matching, bbox-ovals).
+    cfg.use_new_wand_diff=False: oud pad via tekening_profiel.vergelijk_wanden.
     """
     import math as _math
-    from .tekening_profiel import vergelijk_wanden, detecteer_orientatie
-
-    CLUSTER_DIST = 100.0
-    MATERIAALWISSEL_DIST = 50.0
-    RIJ_MIN = 3
-    RIJ_SPAN = 300.0
-    RIJ_Y_TOL = 30.0
-    R = 8.0
+    from .tekening_profiel import detecteer_orientatie
 
     if not oud_path or not nieuw_path:
         return [], [], [], []
 
+    use_new = (cfg is None) or cfg.use_new_wand_diff
+
+    # ------------------------------------------------------------------
+    # OUD PAD (feature-flag False)
+    # ------------------------------------------------------------------
+    if not use_new:
+        from .tekening_profiel import vergelijk_wanden
+
+        CLUSTER_DIST = 100.0
+        MATERIAALWISSEL_DIST = 50.0
+        RIJ_MIN = 3
+        RIJ_SPAN = 300.0
+        RIJ_Y_TOL = 30.0
+        R = 8.0
+
+        try:
+            resultaten = vergelijk_wanden(oud_path, nieuw_path, pagina)
+        except Exception as e:
+            logger.warning(f"vergelijk_wanden mislukt op pagina {pagina}: {e}")
+            return [], [], [], []
+
+        if not resultaten:
+            return [], [], [], []
+
+        try:
+            _doc = fitz.open(nieuw_path)
+            _ori = detecteer_orientatie(_doc[pagina])
+            _doc.close()
+            rotation = _ori["rotation"]
+            dw = _ori["display_width"]
+            dh = _ori["display_height"]
+        except Exception:
+            rotation, dw, dh = 0, pw, ph
+
+        def _to_raw(dx: float, dy: float) -> tuple:
+            if rotation == 90:
+                return (dy, dw - dx)
+            if rotation == 270:
+                return (dh - dy, dx)
+            if rotation == 180:
+                return (dw - dx, dh - dy)
+            return (dx, dy)
+
+        def _make_rect(rx: float, ry: float, r: float = R) -> fitz.Rect:
+            return fitz.Rect(rx - r, ry - r, rx + r, ry + r)
+
+        def _exclude(dx: float, dy: float) -> bool:
+            if layout is not None:
+                return layout.is_excluded((dx, dy))
+            return dx > pw * 0.88 or dy < ph * 0.05
+
+        resultaten = [r for r in resultaten if not _exclude(*r["positie"])]
+        if not resultaten:
+            return [], [], [], []
+
+        def _cluster_groepen(items: list) -> list:
+            gebruikt: set = set()
+            clusters = []
+            for i, item in enumerate(items):
+                if i in gebruikt:
+                    continue
+                grp = [i]
+                gebruik_set = {i}
+                queue = [i]
+                while queue:
+                    seed_idx = queue.pop()
+                    seed = items[seed_idx]
+                    for j, kand in enumerate(items):
+                        if j in gebruik_set:
+                            continue
+                        if seed["wandtype"] != kand["wandtype"]:
+                            continue
+                        if _math.hypot(
+                            seed["positie"][0] - kand["positie"][0],
+                            seed["positie"][1] - kand["positie"][1],
+                        ) < CLUSTER_DIST:
+                            gebruik_set.add(j)
+                            grp.append(j)
+                            queue.append(j)
+                gebruikt |= gebruik_set
+                gx = sum(items[k]["positie"][0] for k in grp) / len(grp)
+                gy = sum(items[k]["positie"][1] for k in grp) / len(grp)
+                clusters.append({
+                    "type": item["type"],
+                    "wandtype": item["wandtype"],
+                    "positie": [gx, gy],
+                    "x_min": min(items[k]["positie"][0] for k in grp),
+                    "x_max": max(items[k]["positie"][0] for k in grp),
+                    "y_min": min(items[k]["positie"][1] for k in grp),
+                    "y_max": max(items[k]["positie"][1] for k in grp),
+                })
+            return clusters
+
+        nieuw_raw = [r for r in resultaten if r["type"] == "nieuw"]
+        verdwenen_raw = [r for r in resultaten if r["type"] == "verdwenen"]
+        nieuw_cl = _cluster_groepen(nieuw_raw)
+        verdwenen_cl = _cluster_groepen(verdwenen_raw)
+
+        # Materiaalwissels: verdwenen + nieuw binnen 50pt, ander wandtype
+        materiaalwissel_items: list = []
+        nieuw_gebruikt: set = set()
+        verdwenen_gebruikt: set = set()
+
+        for vi, vc in enumerate(verdwenen_cl):
+            for ni, nc in enumerate(nieuw_cl):
+                if ni in nieuw_gebruikt:
+                    continue
+                if vc["wandtype"] == nc["wandtype"]:
+                    continue
+                if _math.hypot(
+                    vc["positie"][0] - nc["positie"][0],
+                    vc["positie"][1] - nc["positie"][1],
+                ) < MATERIAALWISSEL_DIST:
+                    mx = (vc["positie"][0] + nc["positie"][0]) / 2
+                    my = (vc["positie"][1] + nc["positie"][1]) / 2
+                    rx, ry = _to_raw(mx, my)
+                    materiaalwissel_items.append({
+                        "rect": _make_rect(rx, ry),
+                        "beschrijving": f"Was: {vc['wandtype']} → Nu: {nc['wandtype']}",
+                    })
+                    nieuw_gebruikt.add(ni)
+                    verdwenen_gebruikt.add(vi)
+                    break
+
+        def _vind_rijen(clusters: list, gebruikt: set) -> tuple:
+            per_type: dict = {}
+            for i, c in enumerate(clusters):
+                if i not in gebruikt:
+                    per_type.setdefault(c["wandtype"], []).append((i, c))
+            rij_specs: list = []
+            rij_idx: set = set()
+            for wandtype, groep in per_type.items():
+                gesorteerd = sorted(groep, key=lambda t: t[1]["positie"][1])
+                n = len(gesorteerd)
+                i = 0
+                while i < n:
+                    j = i + 1
+                    while j < n:
+                        ys = [gesorteerd[k][1]["positie"][1] for k in range(i, j + 1)]
+                        if max(ys) - min(ys) < RIJ_Y_TOL:
+                            j += 1
+                        else:
+                            break
+                    window = gesorteerd[i:j]
+                    if len(window) >= RIJ_MIN:
+                        xs = [c["positie"][0] for _, c in window]
+                        if max(xs) - min(xs) >= RIJ_SPAN:
+                            cy_d = sum(c["positie"][1] for _, c in window) / len(window)
+                            rij_specs.append({
+                                "wandtype": wandtype,
+                                "cy_d": cy_d,
+                                "x_min_d": min(xs),
+                                "x_max_d": max(xs),
+                            })
+                            for idx, _ in window:
+                                rij_idx.add(idx)
+                            i = j
+                            continue
+                    i += 1
+            return rij_specs, rij_idx
+
+        nieuw_rij_specs, nieuw_rij_idx = _vind_rijen(nieuw_cl, nieuw_gebruikt)
+        verdwenen_rij_specs, verdwenen_rij_idx = _vind_rijen(verdwenen_cl, verdwenen_gebruikt)
+        nieuw_gebruikt |= nieuw_rij_idx
+        verdwenen_gebruikt |= verdwenen_rij_idx
+
+        rij_items: list = []
+        for spec in nieuw_rij_specs + verdwenen_rij_specs:
+            cy_d = spec["cy_d"]
+            x_min_d = spec["x_min_d"]
+            x_max_d = spec["x_max_d"]
+            if rotation == 90:
+                rect = fitz.Rect(cy_d - 4, dw - x_max_d, cy_d + 4, dw - x_min_d)
+            elif rotation == 270:
+                rect = fitz.Rect(dh - cy_d - 4, x_min_d, dh - cy_d + 4, x_max_d)
+            else:
+                rect = fitz.Rect(x_min_d, cy_d - 4, x_max_d, cy_d + 4)
+            rij_items.append({
+                "rect": rect,
+                "beschrijving": f"Nieuw: {spec['wandtype']} (rij)",
+            })
+
+        nieuw_items_oud: list = []
+        for i, nc in enumerate(nieuw_cl):
+            if i in nieuw_gebruikt:
+                continue
+            rx, ry = _to_raw(nc["positie"][0], nc["positie"][1])
+            nieuw_items_oud.append({
+                "rect": _make_rect(rx, ry),
+                "beschrijving": f"nieuw: {nc['wandtype']}",
+            })
+
+        verdwenen_items_oud: list = []
+        for i, vc in enumerate(verdwenen_cl):
+            if i in verdwenen_gebruikt:
+                continue
+            rx, ry = _to_raw(vc["positie"][0], vc["positie"][1])
+            verdwenen_items_oud.append({
+                "rect": _make_rect(rx, ry),
+                "beschrijving": f"weg: {vc['wandtype']}",
+            })
+
+        return nieuw_items_oud, verdwenen_items_oud, materiaalwissel_items, rij_items
+
+    # ------------------------------------------------------------------
+    # NIEUW PAD (feature-flag True, default) — wand_diff pipeline
+    # Dispatch op basis van cfg.use_vision_pipeline (default False = Hungarian)
+    # ------------------------------------------------------------------
+    if cfg and getattr(cfg, "use_vision_pipeline", False):
+        from .wand_diff_vision import bereken_wand_diff
+    else:
+        from .wand_diff import bereken_wand_diff
+    from .tekening_profiel import vind_legenda_combined
+
+    oud_doc = nieuw_doc = None
     try:
-        resultaten = vergelijk_wanden(oud_path, nieuw_path, pagina)
+        oud_doc = fitz.open(oud_path)
+        nieuw_doc = fitz.open(nieuw_path)
+        oud_ori = detecteer_orientatie(oud_doc[pagina])
+        nieuw_ori = detecteer_orientatie(nieuw_doc[pagina])
+        legenda = vind_legenda_combined(nieuw_doc[pagina], nieuw_ori, api_key)
+        resultaten = bereken_wand_diff(
+            oud_doc[pagina], nieuw_doc[pagina],
+            oud_ori, nieuw_ori, legenda, api_key, cfg,
+        )
     except Exception as e:
-        logger.warning(f"vergelijk_wanden mislukt op pagina {pagina}: {e}")
+        logger.warning(f"wand_diff mislukt op pagina {pagina}: {e}")
         return [], [], [], []
+    finally:
+        for _d in (oud_doc, nieuw_doc):
+            try:
+                if _d:
+                    _d.close()
+            except Exception:
+                pass
 
     if not resultaten:
         return [], [], [], []
 
-    try:
-        _doc = fitz.open(nieuw_path)
-        _ori = detecteer_orientatie(_doc[pagina])
-        _doc.close()
-        rotation = _ori["rotation"]
-        dw = _ori["display_width"]
-        dh = _ori["display_height"]
-    except Exception:
-        rotation, dw, dh = 0, pw, ph
+    rotation = nieuw_ori.get("rotation", 0)
+    dw = nieuw_ori.get("display_width", pw)
+    dh = nieuw_ori.get("display_height", ph)
 
     def _to_raw(dx: float, dy: float) -> tuple:
         if rotation == 90:
@@ -1201,169 +1426,42 @@ def _collect_wanden_profiel(oud_path: str, nieuw_path: str, pagina: int,
             return (dw - dx, dh - dy)
         return (dx, dy)
 
-    def _make_rect(rx: float, ry: float, r: float = R) -> fitz.Rect:
-        return fitz.Rect(rx - r, ry - r, rx + r, ry + r)
+    def _bbox_to_raw_rect(bbox: list, min_dim: float) -> fitz.Rect:
+        x0, y0, x1, y1 = bbox
+        c1 = _to_raw(x0, y0)
+        c2 = _to_raw(x1, y1)
+        rx0 = min(c1[0], c2[0]) - 2
+        ry0 = min(c1[1], c2[1]) - 2
+        rx1 = max(c1[0], c2[0]) + 2
+        ry1 = max(c1[1], c2[1]) + 2
+        if rx1 - rx0 < min_dim:
+            mid = (rx0 + rx1) / 2
+            rx0, rx1 = mid - min_dim / 2, mid + min_dim / 2
+        if ry1 - ry0 < min_dim:
+            mid = (ry0 + ry1) / 2
+            ry0, ry1 = mid - min_dim / 2, mid + min_dim / 2
+        return fitz.Rect(rx0, ry0, rx1, ry1)
 
     def _exclude(dx: float, dy: float) -> bool:
         if layout is not None:
             return layout.is_excluded((dx, dy))
         return dx > pw * 0.88 or dy < ph * 0.05
 
+    min_dim = cfg.wand_oval_min_dim if cfg else 8.0
     resultaten = [r for r in resultaten if not _exclude(*r["positie"])]
-    if not resultaten:
-        return [], [], [], []
-
-    def _cluster_groepen(items: list) -> list:
-        gebruikt = set()
-        clusters = []
-        for i, item in enumerate(items):
-            if i in gebruikt:
-                continue
-            grp = [i]
-            gebruik_set = {i}
-            queue = [i]
-            while queue:
-                seed_idx = queue.pop()
-                seed = items[seed_idx]
-                for j, kand in enumerate(items):
-                    if j in gebruik_set:
-                        continue
-                    if seed["wandtype"] != kand["wandtype"]:
-                        continue
-                    if _math.hypot(
-                        seed["positie"][0] - kand["positie"][0],
-                        seed["positie"][1] - kand["positie"][1],
-                    ) < CLUSTER_DIST:
-                        gebruik_set.add(j)
-                        grp.append(j)
-                        queue.append(j)
-            gebruikt |= gebruik_set
-            gx = sum(items[k]["positie"][0] for k in grp) / len(grp)
-            gy = sum(items[k]["positie"][1] for k in grp) / len(grp)
-            clusters.append({
-                "type": item["type"],
-                "wandtype": item["wandtype"],
-                "positie": [gx, gy],
-                "x_min": min(items[k]["positie"][0] for k in grp),
-                "x_max": max(items[k]["positie"][0] for k in grp),
-                "y_min": min(items[k]["positie"][1] for k in grp),
-                "y_max": max(items[k]["positie"][1] for k in grp),
-            })
-        return clusters
-
-    nieuw_raw = [r for r in resultaten if r["type"] == "nieuw"]
-    verdwenen_raw = [r for r in resultaten if r["type"] == "verdwenen"]
-    nieuw_cl = _cluster_groepen(nieuw_raw)
-    verdwenen_cl = _cluster_groepen(verdwenen_raw)
-
-    # Materiaalwissels: verdwenen + nieuw binnen 50pt, ander wandtype
-    materiaalwissel_items: list = []
-    nieuw_gebruikt: set = set()
-    verdwenen_gebruikt: set = set()
-
-    for vi, vc in enumerate(verdwenen_cl):
-        for ni, nc in enumerate(nieuw_cl):
-            if ni in nieuw_gebruikt:
-                continue
-            if vc["wandtype"] == nc["wandtype"]:
-                continue
-            if _math.hypot(
-                vc["positie"][0] - nc["positie"][0],
-                vc["positie"][1] - nc["positie"][1],
-            ) < MATERIAALWISSEL_DIST:
-                mx = (vc["positie"][0] + nc["positie"][0]) / 2
-                my = (vc["positie"][1] + nc["positie"][1]) / 2
-                rx, ry = _to_raw(mx, my)
-                materiaalwissel_items.append({
-                    "rect": _make_rect(rx, ry),
-                    "beschrijving": f"Was: {vc['wandtype']} → Nu: {nc['wandtype']}",
-                })
-                nieuw_gebruikt.add(ni)
-                verdwenen_gebruikt.add(vi)
-                break
-
-    # Rij-detectie: 3+ clusters van hetzelfde wandtype op vrijwel dezelfde display_y
-    def _vind_rijen(clusters: list, gebruikt: set) -> tuple:
-        per_type: dict = {}
-        for i, c in enumerate(clusters):
-            if i not in gebruikt:
-                per_type.setdefault(c["wandtype"], []).append((i, c))
-
-        rij_specs: list = []
-        rij_idx: set = set()
-
-        for wandtype, groep in per_type.items():
-            gesorteerd = sorted(groep, key=lambda t: t[1]["positie"][1])
-            n = len(gesorteerd)
-            i = 0
-            while i < n:
-                j = i + 1
-                while j < n:
-                    ys = [gesorteerd[k][1]["positie"][1] for k in range(i, j + 1)]
-                    if max(ys) - min(ys) < RIJ_Y_TOL:
-                        j += 1
-                    else:
-                        break
-                window = gesorteerd[i:j]
-                if len(window) >= RIJ_MIN:
-                    xs = [c["positie"][0] for _, c in window]
-                    if max(xs) - min(xs) >= RIJ_SPAN:
-                        cy_d = sum(c["positie"][1] for _, c in window) / len(window)
-                        rij_specs.append({
-                            "wandtype": wandtype,
-                            "cy_d": cy_d,
-                            "x_min_d": min(xs),
-                            "x_max_d": max(xs),
-                        })
-                        for idx, _ in window:
-                            rij_idx.add(idx)
-                        i = j
-                        continue
-                i += 1
-        return rij_specs, rij_idx
-
-    nieuw_rij_specs, nieuw_rij_idx = _vind_rijen(nieuw_cl, nieuw_gebruikt)
-    verdwenen_rij_specs, verdwenen_rij_idx = _vind_rijen(verdwenen_cl, verdwenen_gebruikt)
-    nieuw_gebruikt |= nieuw_rij_idx
-    verdwenen_gebruikt |= verdwenen_rij_idx
-
-    rij_items: list = []
-    for spec in nieuw_rij_specs + verdwenen_rij_specs:
-        cy_d = spec["cy_d"]
-        x_min_d = spec["x_min_d"]
-        x_max_d = spec["x_max_d"]
-        if rotation == 90:
-            rect = fitz.Rect(cy_d - 4, dw - x_max_d, cy_d + 4, dw - x_min_d)
-        elif rotation == 270:
-            rect = fitz.Rect(dh - cy_d - 4, x_min_d, dh - cy_d + 4, x_max_d)
-        else:
-            rect = fitz.Rect(x_min_d, cy_d - 4, x_max_d, cy_d + 4)
-        rij_items.append({
-            "rect": rect,
-            "beschrijving": f"Nieuw: {spec['wandtype']} (rij)",
-        })
 
     nieuw_items: list = []
-    for i, nc in enumerate(nieuw_cl):
-        if i in nieuw_gebruikt:
-            continue
-        rx, ry = _to_raw(nc["positie"][0], nc["positie"][1])
-        nieuw_items.append({
-            "rect": _make_rect(rx, ry),
-            "beschrijving": f"Nieuw: {nc['wandtype']}",
-        })
-
     verdwenen_items: list = []
-    for i, vc in enumerate(verdwenen_cl):
-        if i in verdwenen_gebruikt:
-            continue
-        rx, ry = _to_raw(vc["positie"][0], vc["positie"][1])
-        verdwenen_items.append({
-            "rect": _make_rect(rx, ry),
-            "beschrijving": f"Verdwenen: {vc['wandtype']}",
-        })
+    for r in resultaten:
+        rect = _bbox_to_raw_rect(r["bbox"], min_dim)
+        label = f"nieuw: {r['wandtype']}" if r["type"] == "nieuw" else f"weg: {r['wandtype']}"
+        item = {"rect": rect, "beschrijving": label}
+        if r["type"] == "nieuw":
+            nieuw_items.append(item)
+        else:
+            verdwenen_items.append(item)
 
-    return nieuw_items, verdwenen_items, materiaalwissel_items, rij_items
+    return nieuw_items, verdwenen_items, [], []
 
 
 # ---------------------------------------------------------------------------
@@ -1373,7 +1471,9 @@ def _collect_wanden_profiel(oud_path: str, nieuw_path: str, pagina: int,
 def _bouw_tekening_pagina(doc, clean_path: str, diff_result: dict,
                           pagina: int, naam: str,
                           oud_path: str | None = None,
-                          nieuw_path: str | None = None):
+                          nieuw_path: str | None = None,
+                          api_key: str | None = None,
+                          cfg: "DiffConfig | None" = None):
     """Kopieer tekening + teken markeringen. Returns alle secties met nummers."""
     src = fitz.open(clean_path)
     doc.insert_pdf(src, from_page=pagina, to_page=pagina)
@@ -1394,8 +1494,9 @@ def _bouw_tekening_pagina(doc, clean_path: str, diff_result: dict,
     total_renvooi = maat_rv + nieuwe_maat_rv + opp_rv + ruimte_rv
 
     # Wandwijzigingen
+    use_new_wand = (cfg is None) or cfg.use_new_wand_diff
     wand_nieuw, wand_verdwenen, wand_materiaal, wand_rijen = _collect_wanden_profiel(
-        oud_path or "", nieuw_path or "", pagina, pw, ph, layout,
+        oud_path or "", nieuw_path or "", pagina, pw, ph, layout, api_key, cfg,
     )
     wand_nieuw = _dedup_wand_items(_filter_wanden_bij_maat(wand_nieuw, maat_items))
     wand_verdwenen = _dedup_wand_items(wand_verdwenen)
@@ -1407,8 +1508,8 @@ def _bouw_tekening_pagina(doc, clean_path: str, diff_result: dict,
     nr = _teken_laag_vakjes(page, nieuwe_maat_items, PAARS, nr)
     nr = _teken_laag_vakjes(page, opp_items, GROEN, nr)
     nr = _teken_laag_vakjes(page, ruimte_items, BLAUW, nr)
-    nr = _teken_laag_cirkels(page, wand_nieuw, PAARS, nr)
-    nr = _teken_laag_cirkels(page, wand_verdwenen, ROOD, nr, doorstreep=True)
+    nr = _teken_laag_cirkels(page, wand_nieuw, GROEN, nr, gebruik_oval=use_new_wand)
+    nr = _teken_laag_cirkels(page, wand_verdwenen, ROOD, nr, doorstreep=True, gebruik_oval=use_new_wand)
     nr = _teken_laag_cirkels(page, wand_materiaal, PAARS, nr)
     nr = _teken_laag_vakjes(page, wand_rijen, PAARS, nr)
 
@@ -1419,7 +1520,7 @@ def _bouw_tekening_pagina(doc, clean_path: str, diff_result: dict,
         (PAARS, "Nieuwe maat toegevoegd", len(nieuwe_maat_items), "rect"),
         (GROEN, "Oppervlaktewijziging", len(opp_items), "rect"),
         (BLAUW, "Ruimtenaamwijziging", len(ruimte_items), "rect"),
-        (PAARS, "Nieuwe wand", len(wand_nieuw) + len(wand_rijen), "cirkel"),
+        (GROEN, "Nieuwe wand", len(wand_nieuw) + len(wand_rijen), "cirkel"),
         (ROOD, "Verdwenen wand", len(wand_verdwenen), "cirkel"),
     ])
 
@@ -1627,6 +1728,7 @@ def generate_multi_page_overlay(
             secties, totaal, renvooi = _bouw_tekening_pagina(
                 doc, nieuw_clean, diff_result, pag_idx, pag_label,
                 oud_path=oud_pdf_path, nieuw_path=nieuw_pdf_path,
+                cfg=config,
             )
 
             _bouw_samenvatting(
@@ -1664,7 +1766,7 @@ def generate_split_rapport(
       1. rapport_pdf: alle samenvattingspagina's (A4)
       2. tekeningen_pdf: alle gemarkeerde tekeningen
 
-    Richard kan ze naast elkaar openen.
+    Dicky kan ze naast elkaar openen.
     """
     import os
     from .config import DiffConfig as _DiffConfig
@@ -1701,6 +1803,7 @@ def generate_split_rapport(
             secties, totaal, renvooi = _bouw_tekening_pagina(
                 doc_temp, nieuw_clean, diff_result, pag_idx, pag_label,
                 oud_path=oud_pdf_path, nieuw_path=nieuw_pdf_path,
+                cfg=config,
             )
             doc_tekeningen.insert_pdf(doc_temp)
             doc_temp.close()

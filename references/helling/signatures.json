@@ -1,0 +1,293 @@
+{
+  "wandtypes": [
+    {
+      "naam": "kalkzandsteen 120mm",
+      "dikte_mm": 120,
+      "dominante_rgb": [
+        216,
+        211,
+        191
+      ],
+      "arcering_bbox": [
+        108,
+        79,
+        55,
+        14
+      ],
+      "bron_renvooi": "renvooi_oud.png",
+      "template": "templates/kalkzandsteen_120mm.png"
+    },
+    {
+      "naam": "kalkzandsteen 100mm",
+      "dikte_mm": 100,
+      "dominante_rgb": [
+        1,
+        1,
+        1
+      ],
+      "arcering_bbox": [
+        108,
+        106,
+        55,
+        14
+      ],
+      "bron_renvooi": "renvooi_oud.png",
+      "template": "templates/kalkzandsteen_100mm.png"
+    },
+    {
+      "naam": "Gibo100mm",
+      "dikte_mm": 100,
+      "dominante_rgb": [
+        219,
+        219,
+        219
+      ],
+      "arcering_bbox": [
+        108,
+        133,
+        55,
+        14
+      ],
+      "bron_renvooi": "renvooi_oud.png",
+      "template": "templates/gibo100mm.png"
+    },
+    {
+      "naam": "Gibo zwaar 70mm",
+      "dikte_mm": 70,
+      "dominante_rgb": [
+        62,
+        30,
+        9
+      ],
+      "arcering_bbox": [
+        108,
+        160,
+        55,
+        14
+      ],
+      "bron_renvooi": "renvooi_oud.png",
+      "template": "templates/gibo_zwaar_70mm.png"
+    },
+    {
+      "naam": "Gibo 70mm",
+      "dikte_mm": 70,
+      "dominante_rgb": [
+        48,
+        106,
+        85
+      ],
+      "arcering_bbox": [
+        108,
+        187,
+        55,
+        14
+      ],
+      "bron_renvooi": "renvooi_oud.png",
+      "template": "templates/gibo_70mm.png"
+    },
+    {
+      "naam": "hsb-wand",
+      "dikte_mm": null,
+      "dominante_rgb": [
+        145,
+        140,
+        119
+      ],
+      "arcering_bbox": [
+        108,
+        220,
+        55,
+        18
+      ],
+      "bron_renvooi": "renvooi_oud.png",
+      "template": "templates/hsb-wand.png"
+    },
+    {
+      "naam": "voorzetwand: isolatie + biobased plaat + gips",
+      "dikte_mm": null,
+      "dominante_rgb": [
+        75,
+        71,
+        95
+      ],
+      "arcering_bbox": [
+        108,
+        251,
+        55,
+        14
+      ],
+      "bron_renvooi": "renvooi_oud.png",
+      "template": "templates/voorzetwand_isolatie_biobased_plaat_gips.png"
+    },
+    {
+      "naam": "isolatie+stuc",
+      "dikte_mm": null,
+      "dominante_rgb": [
+        24,
+        134,
+        124
+      ],
+      "arcering_bbox": [
+        108,
+        282,
+        55,
+        14
+      ],
+      "bron_renvooi": "renvooi_oud.png",
+      "template": "templates/isolatiestuc.png"
+    },
+    {
+      "naam": "PIR+OSB",
+      "dikte_mm": null,
+      "dominante_rgb": [
+        9,
+        9,
+        9
+      ],
+      "arcering_bbox": [
+        108,
+        306,
+        55,
+        14
+      ],
+      "bron_renvooi": "renvooi_oud.png",
+      "template": "templates/pirosb.png"
+    },
+    {
+      "naam": "hardschuimisolatie",
+      "dikte_mm": null,
+      "dominante_rgb": [
+        131,
+        134,
+        125
+      ],
+      "arcering_bbox": [
+        108,
+        330,
+        55,
+        14
+      ],
+      "bron_renvooi": "renvooi_oud.png",
+      "template": "templates/hardschuimisolatie.png"
+    },
+    {
+      "naam": "prefabbeton",
+      "dikte_mm": null,
+      "dominante_rgb": [
+        186,
+        186,
+        186
+      ],
+      "arcering_bbox": [
+        108,
+        354,
+        55,
+        20
+      ],
+      "bron_renvooi": "renvooi_oud.png",
+      "template": "templates/prefabbeton.png"
+    },
+    {
+      "naam": "beton",
+      "dikte_mm": null,
+      "dominante_rgb": [
+        159,
+        159,
+        159
+      ],
+      "arcering_bbox": [
+        108,
+        382,
+        55,
+        14
+      ],
+      "bron_renvooi": "renvooi_oud.png",
+      "template": "templates/beton.png"
+    },
+    {
+      "naam": "Rhombus gevelafwerking",
+      "dikte_mm": null,
+      "dominante_rgb": [
+        6,
+        0,
+        0
+      ],
+      "arcering_bbox": [
+        108,
+        413,
+        55,
+        14
+      ],
+      "bron_renvooi": "renvooi_oud.png",
+      "template": "templates/rhombus_gevelafwerking.png"
+    },
+    {
+      "naam": "Mato gevelafwerking",
+      "dikte_mm": null,
+      "dominante_rgb": [
+        0,
+        0,
+        0
+      ],
+      "arcering_bbox": [
+        108,
+        442,
+        55,
+        14
+      ],
+      "bron_renvooi": "renvooi_oud.png",
+      "template": "templates/mato_gevelafwerking.png"
+    },
+    {
+      "naam": "achterwand toilet",
+      "dikte_mm": null,
+      "dominante_rgb": [
+        6,
+        0,
+        0
+      ],
+      "arcering_bbox": [
+        108,
+        469,
+        55,
+        14
+      ],
+      "bron_renvooi": "renvooi_oud.png",
+      "template": "templates/achterwand_toilet.png"
+    },
+    {
+      "naam": "heb-wand",
+      "dikte_mm": null,
+      "dominante_rgb": [
+        146,
+        141,
+        121
+      ],
+      "arcering_bbox": [
+        45,
+        226,
+        56,
+        18
+      ],
+      "bron_renvooi": "renvooi_nieuw.png",
+      "template": "templates/heb-wand.png"
+    },
+    {
+      "naam": "sandwichpaneel",
+      "dikte_mm": null,
+      "dominante_rgb": [
+        149,
+        155,
+        157
+      ],
+      "arcering_bbox": [
+        45,
+        259,
+        56,
+        10
+      ],
+      "bron_renvooi": "renvooi_nieuw.png",
+      "template": "templates/sandwichpaneel.png"
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "items": [
+    {
+      "naam": "metselwerk type 1: bruin, ca. 210x100x50mm, wildverband koppenmaat 110mm, laagmaat ø 1,22mm",
+      "visuele_weergave": "rechthoek met rode diagonale lijnen van linksboven naar rechtsonder"
+    },
+    {
+      "naam": "metselwerk type 2: wit-grijs, ca. 215x102x52, wildverband koppenmaat 113mm, laagmaat ø 2,20mm",
+      "visuele_weergave": "rechthoek met blauwe diagonale lijnen van linksboven naar rechtsonder"
+    },
+    {
+      "naam": "isolatie, generiek d = 171mm",
+      "visuele_weergave": "rechthoek met gele/groene zigzag/driehoekspatroon"
+    },
+    {
+      "naam": "geluidabsorberende binnendeur-kozijn combinatie overstroommodder in binnendeur",
+      "visuele_weergave": "symbool met driehoek naar links en drie horizontale lijnen"
+    },
+    {
+      "naam": "kalkzandsleenwand, CS12 blokken/elementen gelijmd",
+      "visuele_weergave": "rechthoek met groene diagonale lijnen van linksonder naar rechtsboven"
+    },
+    {
+      "naam": "kalkzandsleenwand, CS20 blokken/elementen gelijmd",
+      "visuele_weergave": "rechthoek met groene diagonale kruisarcering (beide richtingen)"
+    },
+    {
+      "naam": "kalkzandsleenwand, CS36 blokken/elementen gelijmd",
+      "visuele_weergave": "rechthoek met zwarte kruisjes/X-patroon"
+    },
+    {
+      "naam": "gbo binnenwand normaal, d = 100mm",
+      "visuele_weergave": "rechthoek met paarse/blauwe verticale gestreepte blokjes"
+    }
+  ]
+}

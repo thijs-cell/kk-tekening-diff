@@ -1,0 +1,216 @@
+{
+  "items": [
+    {
+      "naam": "100mm baksteen metselwerk",
+      "visuele_weergave": "Rechthoek met diagonale lijnen en baksteenpatroon"
+    },
+    {
+      "naam": "65mm baksteen gekanteld dikformaat metselwerk",
+      "visuele_weergave": "Rechthoek met diagonale lijnen en dikformaat baksteenpatroon"
+    },
+    {
+      "naam": "HSB element 272mm",
+      "visuele_weergave": "Rechthoek met horizontale segmentatie"
+    },
+    {
+      "naam": "100mm kalkzandsteen",
+      "visuele_weergave": "Rechthoek met diagonale lijn"
+    },
+    {
+      "naam": "150mm kalkzandsteen",
+      "visuele_weergave": "Rechthoek met diagonale lijn"
+    },
+    {
+      "naam": "250mm kalkzandsteen",
+      "visuele_weergave": "Rechthoek met twee diagonale lijnen"
+    },
+    {
+      "naam": "isolatie div. diktes",
+      "visuele_weergave": "Rechthoek met stippellijn"
+    },
+    {
+      "naam": "hoogwaardige isolatie div. diktes",
+      "visuele_weergave": "Rechthoek met dubbele stippellijn"
+    },
+    {
+      "naam": "gipsblokken 100mm",
+      "visuele_weergave": "Rechthoek met korte verticale streepjes"
+    },
+    {
+      "naam": "gipsblokken zwaar 100mm",
+      "visuele_weergave": "Rechthoek met korte verticale streepjes (dikker)"
+    },
+    {
+      "naam": "gipsblokken 70mm",
+      "visuele_weergave": "Rechthoek met korte verticale streepjes (dunner)"
+    },
+    {
+      "naam": "metalstudwand 100mm",
+      "visuele_weergave": "Dubbele lijn met tussenruimte"
+    },
+    {
+      "naam": "metalstudwand 150mm",
+      "visuele_weergave": "Dubbele lijn met tussenruimte (breder)"
+    },
+    {
+      "naam": "metalstud voorzetwand 175mm",
+      "visuele_weergave": "Asymmetrische dubbele lijn met tussenruimte"
+    },
+    {
+      "naam": "metalstud woningscheiden 255mm",
+      "visuele_weergave": "Dubbele lijn met brede tussenruimte"
+    },
+    {
+      "naam": "roosterwand",
+      "visuele_weergave": "Rechthoek met open structuur"
+    },
+    {
+      "naam": "betonwand 175mm",
+      "visuele_weergave": "Rechthoek met lichte grijze vulling"
+    },
+    {
+      "naam": "betonwand 250mm",
+      "visuele_weergave": "Rechthoek met middel grijze vulling"
+    },
+    {
+      "naam": "betonwand 350mm",
+      "visuele_weergave": "Rechthoek met donker grijze vulling"
+    },
+    {
+      "naam": "prefab betonwand 175mm",
+      "visuele_weergave": "Rechthoek met lichte grijze vulling en diagonale lijn"
+    },
+    {
+      "naam": "prefab betonwand 250mm",
+      "visuele_weergave": "Rechthoek met middel grijze vulling en diagonale lijn"
+    },
+    {
+      "naam": "hemelwaterafvoer",
+      "visuele_weergave": "Symbool: HWA in cirkel"
+    },
+    {
+      "naam": "deur verwaard uitgevoerd",
+      "visuele_weergave": "Symbool: Vz met pijl naar beneden"
+    },
+    {
+      "naam": "Entree",
+      "visuele_weergave": "Zwarte driehoek naar beneden"
+    },
+    {
+      "naam": "Metselwerk, waalformaat, wildverband",
+      "visuele_weergave": "Rechthoek met horizontale lijnen (waalformaat)"
+    },
+    {
+      "naam": "Metselwerk, staand, wildverband",
+      "visuele_weergave": "Rechthoek met verticale lijnen"
+    },
+    {
+      "naam": "Metselwerk, gekanteld dikformaat, kruisvoeg",
+      "visuele_weergave": "Rechthoek met rasterpatroon"
+    },
+    {
+      "naam": "Gevelrooster",
+      "visuele_weergave": "Zwart vierkant"
+    },
+    {
+      "naam": "Raam met folie/colorbd",
+      "visuele_weergave": "Letter C"
+    },
+    {
+      "naam": "Vast glas; dove gevel zonder te openen delen",
+      "visuele_weergave": "Letters Vg"
+    },
+    {
+      "naam": "Serre; verglaasde loggia conform rapport Peutz of loggia met gesloten borstwering",
+      "visuele_weergave": "Letter S"
+    },
+    {
+      "naam": "Binnendeur met bovenlicht: glas",
+      "visuele_weergave": "Plus symbool (+)"
+    },
+    {
+      "naam": "Binnendeur met bovenlicht: dicht paneel",
+      "visuele_weergave": "Diamant symbool (◆)"
+    },
+    {
+      "naam": "Binnendeur geluidwerend",
+      "visuele_weergave": "Vierkant met pijl naar rechts boven"
+    },
+    {
+      "naam": "vloertegels 150x150mm",
+      "visuele_weergave": "Raster met kleine vierkantjes"
+    },
+    {
+      "naam": "vloertegels 300x300mm",
+      "visuele_weergave": "Raster met grotere vierkantjes"
+    },
+    {
+      "naam": "Gierzwaluwkast achter metselwerk",
+      "visuele_weergave": "Rechthoek met zigzag patroon"
+    },
+    {
+      "naam": "Mussenkast in metselwerk vlak",
+      "visuele_weergave": "Rechthoek met horizontale lijn"
+    },
+    {
+      "naam": "Zelfsluitend",
+      "visuele_weergave": "Golflijnsymbool"
+    },
+    {
+      "naam": "30 min. WBDBO + R200 rookwerend",
+      "visuele_weergave": "Rode lijn met diamanten"
+    },
+    {
+      "naam": "30 min. WBDBO + R200 rookwerend, zelfsluitend",
+      "visuele_weergave": "Rode golflijn met diamanten"
+    },
+    {
+      "naam": "30 min. WBDBO + R200 rookwerend",
+      "visuele_weergave": "Rode streeplijn"
+    },
+    {
+      "naam": "60 min. WBDBO + R200 rookwerend",
+      "visuele_weergave": "Groene lijn met diamanten"
+    },
+    {
+      "naam": "60 min. WBDBO + R200 rookwerend, zelfsluitend",
+      "visuele_weergave": "Groene golflijn met diamanten"
+    },
+    {
+      "naam": "60 min. WBDBO + R200 rookwerend",
+      "visuele_weergave": "Groene streeplijn"
+    },
+    {
+      "naam": "Optische rookmelder (cf. NEN2555)",
+      "visuele_weergave": "Vierkant met RM"
+    },
+    {
+      "naam": "extra beveiligde vluchtroute",
+      "visuele_weergave": "Rechthoek met EBV"
+    },
+    {
+      "naam": "droge blusleiding",
+      "visuele_weergave": "Cirkel met OC en letter E"
+    },
+    {
+      "naam": "nooduitgang",
+      "visuele_weergave": "Groen vierkant met wit figuur (nooduitgang symbool)"
+    },
+    {
+      "naam": "brandweerpaneel",
+      "visuele_weergave": "Rechthoek met BMC"
+    },
+    {
+      "naam": "paniekbeslag",
+      "visuele_weergave": "Letter P"
+    },
+    {
+      "naam": "brandblusser",
+      "visuele_weergave": "Rood vierkant met wit brandblusser symbool"
+    },
+    {
+      "naam": "sleutelkluis",
+      "visuele_weergave": "Letters SK"
+    }
+  ]
+}

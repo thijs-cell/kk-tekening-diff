@@ -1,0 +1,136 @@
+{
+  "items": [
+    {
+      "naam": "gevelhestelwerk in banden staand uitgevoerd conform gelijke lichte en donkere voeg toegepast",
+      "visuele_weergave": "diagonale strepen naar rechts"
+    },
+    {
+      "naam": "kalkzandsteen CS386 75mm, 100mm, 120mm, 150mm",
+      "visuele_weergave": "diagonale strepen naar rechts (dichter)"
+    },
+    {
+      "naam": "kalkzandsteen CS386 214mm en 300mm",
+      "visuele_weergave": "diagonale strepen naar rechts (nog dichter)"
+    },
+    {
+      "naam": "prefab betonnen gevelpaneel",
+      "visuele_weergave": "diagonale strepen naar rechts (zeer dicht)"
+    },
+    {
+      "naam": "geveldekte Multiplex ultra-XS (zolide wandopbouw Rc > 4,7m2/kW)",
+      "visuele_weergave": "ruitpatroon/kruisarcering"
+    },
+    {
+      "naam": "HSB-element (wandopbouw Rc > 4,7m.kW) opbouw (bu-bi) - bitumineuze dakbedekking opbouw (bu-bi) boven zweep - dampremmende folie - gipslaat 12,5mm",
+      "visuele_weergave": "dicht gestippeld patroon"
+    },
+    {
+      "naam": "metal stud wand 125mm",
+      "visuele_weergave": "horizontale gestreepte vulling"
+    },
+    {
+      "naam": "metal stud wand 205mm",
+      "visuele_weergave": "horizontale gestreepte vulling"
+    },
+    {
+      "naam": "metal stud voorzetwand 100mm",
+      "visuele_weergave": "horizontale gestreepte vulling"
+    },
+    {
+      "naam": "metal stud voorzetwand 75mm",
+      "visuele_weergave": "horizontale gestreepte vulling (dichter)"
+    },
+    {
+      "naam": "lichte binnenwand 70mm en 100mm (gips normaal, GNL)",
+      "visuele_weergave": "gestippelde lijn"
+    },
+    {
+      "naam": "lichte binnenwand 70mm (gips vochtwerend, GVL) gipsvochtwerend, GHL, daar boven gips normaal, GNL)",
+      "visuele_weergave": "gestippelde lijn met andere markering"
+    },
+    {
+      "naam": "lichte binnenwand 70mm (gips klasse 2, G.I.)",
+      "visuele_weergave": "korte verticale streepjes"
+    },
+    {
+      "naam": "wachtglas bestaande op plafond - toilet 2d ca. 1200mm +vil - toilet 3d, 4d, 7m kWh o.k. bovenkastjes",
+      "visuele_weergave": "streepjeslijn"
+    },
+    {
+      "naam": "ingang woning / appartementengebouw",
+      "visuele_weergave": "zwarte driehoek/pijl naar boven"
+    },
+    {
+      "naam": "meterrast",
+      "visuele_weergave": "letter M in vierkant"
+    },
+    {
+      "naam": "geluidwerende deur",
+      "visuele_weergave": "dB symbool in vierkant"
+    },
+    {
+      "naam": "hemelwaterafvoer",
+      "visuele_weergave": "cirkel met HWA"
+    },
+    {
+      "naam": "noodtoestem",
+      "visuele_weergave": "no symbool"
+    },
+    {
+      "naam": "opstellekast WTW-unit",
+      "visuele_weergave": "vierkant met ventilator symbool"
+    },
+    {
+      "naam": "opstellekast verdeler vloerverwarming",
+      "visuele_weergave": "radiator symbool"
+    },
+    {
+      "naam": "opstellekast electrische radiator",
+      "visuele_weergave": "electrische radiator symbool"
+    },
+    {
+      "naam": "opstellekast boiler",
+      "visuele_weergave": "boiler symbool met cirkel"
+    },
+    {
+      "naam": "opstellekast wm = wasmachine, wd = wasdroger, wdc = wasdroogcombinatie",
+      "visuele_weergave": "vierkant met wm/wd labels"
+    },
+    {
+      "naam": "constructie 30 min. WBDBO weerstand tegen branddoorslag en brandoverslag conform NEN 6068 2020 nl",
+      "visuele_weergave": "streepjeslijn met rood vierkant en 30"
+    },
+    {
+      "naam": "constructie 60 min. WBDBO weerstand tegen branddoorslag en brandoverslag conform NEN 6068 2020 nl",
+      "visuele_weergave": "streepjeslijn met groen vierkant en 60"
+    },
+    {
+      "naam": "mobiele brandblusser",
+      "visuele_weergave": "rood brandblusser symbool"
+    },
+    {
+      "naam": "Niet-koserende rookmelder, aan elkaar gekoppeld, op lichtnet aangesloten, uitgevoerd conform NEN 2555",
+      "visuele_weergave": "RM symbool in vierkant"
+    },
+    {
+      "naam": "vluchtwegaanduiding",
+      "visuele_weergave": "groen vluchtwegbord met pijl en figuur"
+    },
+    {
+      "naam": "deur zelfsluitend",
+      "visuele_weergave": "zigzaglijn (enkele golf)"
+    },
+    {
+      "naam": "deur zelfsluitend en 30 min. brandwerend, deur in combinatie met het kozijn beeft een brandwerendheid van tenminste 30 minuten conform NEN 6069 2020 nl",
+      "visuele_weergave": "zigzaglijn (dubbele golf)"
+    },
+    {
+      "naam": "Deur te openen zonder sleutel onmiddellijk te openen over de volledige vereiste breedte",
+      "visuele_weergave": "LS symbool"
+    },
+    {
+      "naam": "deur zelfsluitend en 60 min. brandwerend, deur in combinatie met het kozijn beeft een brandwerendheid van tenminste 60 minuten conform NEN 6069 2020 nl",
+      "visuele_weergave": "zigzaglijn (driedubbele golf)"
+    }
+  ]
+}
